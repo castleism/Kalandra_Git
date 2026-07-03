@@ -1,0 +1,136 @@
+"""
+CORE_ENGINE/DATABASE_HANDLER.PY
+Purpose: Manages the local SQLite database. Handles storage of game information, 
+timestamps entries to ensure post-patch verification, and builds clickable 
+web citations for the user overlay interface.
+
+Dependencies: sqlite3, datetime (Standard Python Libraries)
+"""
+import sqlite3
+from datetime import datetime
+import os
+
+class KalandraDBHandler:
+    def __init__(self, db_dir=None, db_name="localized_knowledge.db"):
+        """
+        Initializes the database handler and ensures local storage directory exists.
+
+        The database folder is configurable: pass db_dir, else read "dir_database"
+        from data_engine/config.json, else default to "data_engine" (back-compat
+        with existing installs so nobody's database goes missing).
+        """
+        if db_dir is None:
+            db_dir = self._configured_db_dir()
+        self.db_path = os.path.join(db_dir, db_name)
+        # Ensure the data folder exists
+        os.makedirs(db_dir, exist_ok=True)
+        
+        # Connect to the SQLite local database file.
+        # check_same_thread=False is a safety net; the app also gives each
+        # background worker its OWN handler/connection (the correct pattern),
+        # so a single connection is never actively shared across threads at once.
+        self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
+        self.cursor = self.conn.cursor()
+        # WAL + a busy timeout keep the DB responsive under the concurrent crawler
+        # (many quick writes serialized behind one lock, plus background reads).
+        try:
+            self.conn.execute("PRAGMA journal_mode=WAL")
+            self.conn.execute("PRAGMA synchronous=NORMAL")
+            self.conn.execute("PRAGMA busy_timeout=10000")
+        except Exception:
+            pass
+        self.initialize_schema()
+
+    @staticmethod
+    def _configured_db_dir():
+        try:
+            import json
+            with open(os.path.join("data_engine", "config.json"), "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+            return cfg.get("dir_database") or "data_engine"
+        except Exception:
+            return "data_engine"
+
+    def initialize_schema(self):
+        """
+        Builds the localized knowledge tables and patch change logs.
+        Every entry tracks when it was scraped, its source link, and live patch tags.
+        """
+        # Table 1: Scoured Game Data with Time Stamps & Citations
+        self.cursor.execute("""
+            CREATE TABLE IF NOT EXISTS knowledge_ledger (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                topic_tag TEXT NOT NULL,
+                content_payload TEXT NOT NULL,
+                source_url TEXT NOT NULL,
+                scraped_at TEXT NOT NULL,
+                game_version_tag TEXT DEFAULT 'Patch 0.5.4'
+            )
+        """)
+        
+        # Table 2: Stream Clips & Player Ideas Ledger (The Idea Vault)
+        self.cursor.execute("""
+            CREATE TABLE IF NOT EXISTS player_ideas (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                idea_summary TEXT NOT NULL,
+                logged_at TEXT NOT NULL,
+                associated_build TEXT DEFAULT 'Generic'
+            )
+        """)
+        self.conn.commit()
+
+    def insert_scoured_data(self, topic, content, url, version="Patch 0.5.4"):
+        """
+        Inserts newly parsed game data with an absolute, trackable timestamp.
+        """
+        current_time = datetime.now().isoformat()
+        self.cursor.execute("""
+            INSERT INTO knowledge_ledger (topic_tag, content_payload, source_url, scraped_at, game_version_tag)
+            VALUES (?, ?, ?, ?, ?)
+        """, (topic, content, url, current_time, version))
+        self.conn.commit()
+        return self.cursor.lastrowid
+
+    def log_stream_idea(self, idea_text, build_name="Theorycraft"):
+        """
+        Saves a player's stream notes or raw mechanical theories into the vault.
+        """
+        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        self.cursor.execute("""
+            INSERT INTO player_ideas (idea_summary, logged_at, associated_build)
+            VALUES (?, ?, ?)
+        """, (idea_text, current_time, build_name))
+        self.conn.commit()
+
+    def get_clickable_citation(self, record_id):
+        """
+        Constructs an HTML-safe clickable anchor link based on the database index ID.
+        """
+        self.cursor.execute("SELECT source_url FROM knowledge_ledger WHERE id = ?", (record_id,))
+        result = self.cursor.fetchone()
+        if result and result[0]:
+            return f'<a href="{result[0]}" style="color: #d4a373; font-weight: bold;">[Source Document #{record_id}]</a>'
+        return "[Citation Link Unavailable]"
+
+    def close(self):
+        """Safely terminates the database connection."""
+        self.conn.close()
+
+# Interactive Self-Test Block
+if __name__ == "__main__":
+    print("Testing Kalandra Database System...")
+    db = KalandraDBHandler()
+    
+    # Test Inserting a Scoured Website Resource
+    doc_id = db.insert_scoured_data(
+        topic="Widowhail Scaling Interaction",
+        content="Widowhail bow increases equipped quiver stats by up to 250%.",
+        url="https://poe2db.tw/us/Widowhail"
+    )
+    print(f"Successfully created localized record #{doc_id}.")
+    print(f"Generated Interactive Link: {db.get_clickable_citation(doc_id)}")
+    
+    # Test Logging an On-Stream Idea Note
+    db.log_stream_idea("Saw a reverse-chill setup abusing physical hits from Scolds helmet.")
+    print("Logged streaming note to personal Idea Vault successfully.")
+    db.close()

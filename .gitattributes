@@ -1,2 +1,38 @@
-# Auto detect text files and perform LF normalization
+# Normalize line endings so commits don't flip between LF and CRLF across
+# machines. Git stores text as LF in the repo and checks out the right ending
+# per file type / OS — this silences the "LF to CRLF" warning and keeps diffs
+# showing only real changes.
+
+# Auto-detect text vs binary; normalize text to LF in the repository.
 * text=auto
+
+# Source / data that should be LF everywhere.
+*.py    text eol=lf
+*.lua   text eol=lf
+*.sh    text eol=lf
+*.md    text eol=lf
+*.json  text eol=lf
+*.txt   text eol=lf
+*.html  text eol=lf
+*.css   text eol=lf
+*.js    text eol=lf
+
+# Windows scripts are happiest as CRLF.
+*.bat   text eol=crlf
+*.cmd   text eol=crlf
+*.ps1   text eol=crlf
+
+# Binary files — never touch their bytes.
+*.png   binary
+*.ico   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.db    binary
+*.sqlite binary
+*.zip   binary
+*.7z    binary
+*.bin   binary
+*.tga   binary
+*.glb   binary
+*.gltf  binary

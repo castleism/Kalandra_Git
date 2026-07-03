@@ -1,0 +1,17 @@
+[
+  {
+    "id": "cor_1782790511679_1",
+    "topic": "Corrupted Blood",
+    "correction": "Corrupted Blood (applied by the Corrupting Cry support) is a STACKING PHYSICAL damage-over-time debuff. It is NOT a Bleed and is NOT affected by Bleed-specific modifiers (e.g. 'increased Bleeding damage', faster bleeding, bleed on hit). It scales with modifiers to Physical damage, to Damage Over Time, to generic/area damage where applicable, with warcry effectiveness/exerted attacks that apply more stacks, and with the number of stacks applied. Never recommend Bleed-specific scaling for Corrupted Blood.",
+    "tags": [
+      "corrupted blood",
+      "corrupting cry",
+      "bleed",
+      "physical",
+      "dot",
+      "warcry",
+      "fortifying cry"
+    ],
+    "added": "2026-06-29 19:35"
+  }
+]

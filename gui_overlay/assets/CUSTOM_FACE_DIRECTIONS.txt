@@ -1,0 +1,18 @@
+=================================================================
+           KALANDRA OVERLAY: CUSTOM FACE & GRAPHICS MANUAL       
+=================================================================
+
+This application supports custom visual overrides for both the outer
+Mirror Frame and the central floating AI Orb core.
+
+INSTRUCTIONS:
+1. Drop your custom PNG images directly into this folder.
+2. Rename your files exactly to match the following names:
+   - Outer Mirror Frame:   mirror_of_kalandra.png
+   - Floating AI Orb/Face: divine_orb.png
+
+3. Restart the overlay application to load your textures.
+
+Note: If no files are detected, the system automatically draws high-
+fidelity vector fallbacks. Transparent backgrounds (.png) are highly
+recommended to maintain the immersive transparent overlay aesthetic.

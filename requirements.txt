@@ -1,0 +1,30 @@
+# Kalandra Overlay dependencies
+# NOTE: versions are intentionally left as ">=" floors (not "==") so pip installs
+# prebuilt wheels for your Python version (incl. Python 3.13). Hard-pinning old
+# versions forces a source build, which needs a C++ compiler you may not have.
+#
+# If a heavy optional package ever fails, install in the three groups below
+# separately -- the overlay launches fine with just the CORE group; each feature
+# reports an install hint if its libs are missing.
+
+# ---------- CORE (UI + scraper + screen recording) ----------
+PyQt6>=6.7.0            # Frameless transparent overlay window
+PyQt6-WebEngine>=6.7.0  # Embedded browser tabs in the dashboard (Craft of Exile, FilterBlade, poe.ninja)
+requests>=2.31.0        # HTTP fetching
+requests-cache>=1.2.0   # Local caching of web hits
+beautifulsoup4>=4.12.3  # HTML parsing (uses Python's built-in parser; no lxml needed)
+python-dotenv>=1.0.1    # Optional .env API-key loading
+mss>=9.0.1              # Fast screen capture
+opencv-python>=4.10.0   # H.264/MP4 VideoWriter
+numpy>=2.1.0            # Frame/audio buffers (2.1+ ships Python 3.13 wheels)
+keyring>=25.2.1         # OS keychain for API keys / tokens
+
+# ---------- VOICE (local ears + local voice) ----------
+faster-whisper>=1.0.3   # On-device speech-to-text
+sounddevice>=0.4.7      # Microphone capture
+pyttsx3>=2.90           # On-device text-to-speech
+soundfile>=0.12.1       # WAV helpers
+
+# ---------- AI BRAIN (install whichever you use) ----------
+openai>=1.40.0          # ChatGPT brain (needs OPENAI_API_KEY)
+google-genai>=1.0.0     # Gemini brain, current SDK (needs GEMINI_API_KEY)

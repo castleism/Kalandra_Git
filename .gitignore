@@ -1,0 +1,69 @@
+# ---------------------------------------------------------------------------
+# Kalandra .gitignore
+# Commit the CODE; keep machine-specific config, secrets, big data, and bundled
+# third-party tools/installers OUT of the repo (GitHub caps files at 100 MB and
+# these are regenerable / re-downloadable per machine).
+# ---------------------------------------------------------------------------
+
+# Python caches / build
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+build/
+dist/
+
+# Machine-specific config + secrets (use config.template.json instead)
+# NOTE: API keys / POESESSID are NOT here because they are never written to
+# files — they live in the OS keychain (Windows Credential Manager) via keyring.
+data_engine/config.json
+data_engine/.secrets.json
+.secrets.json
+.env
+
+# User-generated data that may contain things you typed / your collections
+data_engine/issues.json
+data_engine/reserve_items.json
+data_engine/chat_*.txt
+
+# Databases, caches, and generated data (big + regenerable)
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.bin
+data_engine/crash.log
+
+# Generated/runtime output folders (keep the folders via .gitkeep, drop contents)
+data_engine/snapshots/*
+data_engine/clips/*
+data_engine/transcripts/*
+data_engine/pob/*
+data_engine/vault/*
+data_engine/game_data/*
+data_engine/secondary_sources/*
+KalandraVault/
+!**/.gitkeep
+
+# Bundled third-party tools + offline installer payloads (huge; set up per machine
+# via the installer / setup, not committed). PoB, LuaJIT, Rhubarb, EE2, etc.
+tools/
+Additional Resources/
+
+# Big archives / snapshots
+*.zip
+*.7z
+Kalandra.zip
+Kalandra-code-update.zip
+
+# Misc junk
+nul
+nulif
+.DS_Store
+Thumbs.db
+*.log
+unsupported.txt
