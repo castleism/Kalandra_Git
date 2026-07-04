@@ -98,7 +98,25 @@ def main():
             QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts, True)
         except Exception:
             pass
+        # Windows taskbar identity: without an explicit AppUserModelID the
+        # taskbar groups our windows under pythonw.exe and shows ITS icon.
+        # Must be set BEFORE any window exists.
+        try:
+            import ctypes
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+                "Kalandra.Overlay")
+        except Exception:
+            pass
         app = QApplication(sys.argv)
+        # App-wide icon = the same kalandra.ico the desktop shortcut uses, so
+        # taskbar buttons and alt-tab show the mirror.
+        try:
+            from PyQt6.QtGui import QIcon
+            _ico = os.path.join("gui_overlay", "assets", "kalandra.ico")
+            if os.path.exists(_ico):
+                app.setWindowIcon(QIcon(_ico))
+        except Exception:
+            pass
         # The overlay is a Tool window; Qt would otherwise quit when the last
         # NON-tool window (the dashboard) closes. Keep the app alive and let the
         # overlay own the exit.

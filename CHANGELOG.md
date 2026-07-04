@@ -3,11 +3,307 @@
 All notable changes to Kalandra are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/); versions follow
 the app's `version.py`. Process: every finished ROADMAP item gets an entry here
-**and** a status flip in `ROADMAP.md`, in the same commit.
+**and** a status flip in `docs/ROADMAP.md`, in the same commit.
 
 Repo: https://github.com/castleism/Kalandra_Git
 
 ## [Unreleased]
+
+### Added — 2026-07-04 Companion wave (W4, spec: `docs/DESIGN_COMPANION.md`)
+- **The owl guide** (W4-01) — the owl decoration from the Mirror's frame, cut
+  out as its own face (`assets/owl_face.png`), perches in the dashboard
+  corner and walks you through every tab in chat bubbles. The bubble pointer
+  is the mirror's hanging arrow finial (`assets/owl_arrow.png`): it points up
+  at the tab it's introducing, down at the owl when chatting. First visit to
+  each tab auto-intros once; click the owl to step through that tab's tips.
+- **First-use interview + player profile** (W4-02) — after its welcome tour
+  the owl asks 10 questions (PoE background, leagues, peak level, how those
+  levels happened — carries/rotas/temple-leech aware, with "prefer not to
+  say" — solo/party, meta vs niche, stance on pre-nerf mechanics, budget,
+  explanation depth, past builds). Answers persist to
+  `data_engine/player_profile.json` and a compact profile block is injected
+  into EVERY AI prompt so explanations land at the right depth. Right-click
+  the owl to redo. (`core_engine/player_profile.py`,
+  `gui_overlay/owl_interview.py`)
+- **Companion tab** (W4-03) — new first dashboard tab: threaded orb chats
+  (`data_engine/chat_threads/`), the Terminal firehose rendered as small
+  color-coded action notes between messages (sync=sapphire, build=emerald,
+  AI=gold, capture=amber, errors=ruby; toggleable), input wired to the same
+  brain as voice. Auto-attendant stub included (profile-gated local
+  templates, config `companion_attendant`, off by default).
+- **Provider interfaces** (north star) — `core_engine/providers.py`: every
+  third-party tool (PoB, poe.ninja, trade site, craft planning, game data,
+  capture) now has a swappable interface + registry, so official APIs can
+  replace any tool by changing one adapter.
+- **Price ledger** (W4-12 local-first) — `core_engine/price_ledger.py`:
+  every Price Check is parsed and logged to `data_engine/price_ledger.db`
+  (mods templated: "+120 to maximum Life" → "+# to maximum Life" + value).
+  Naive median mod-value + item estimates that improve all league. Local
+  only; community upload stays opt-in P9.
+- **Grind tracker** (W4-11) — `core_engine/grind_tracker.py`: snapshot a
+  grind loadout (tablets/waystones with mods), record per-run income, get
+  per-loadout chaos/hour and per-mod return correlations (honest min-sample
+  gates; refuses mixed-currency lies).
+- **Character folios** (W4-07 foundation) — `core_engine/character_folio.py`:
+  `data_engine/characters/<slug>/` per character (profile.json, review.md,
+  roadmap.md, watchlist.json, sim_notes/) + size-budgeted `prompt_corpus()`
+  for token-cheap AI injection.
+- **Companion test suite** — `tests/companion_checks.py`: 94 adversarial
+  checks over the five new core modules (all green; caught and fixed a
+  mod-template sign bug and a prompt-corpus leak before ship).
+- **Nerf intelligence** (W4-06 core) — `core_engine/nerf_intel.py`: patch
+  signal (heuristic nerf/buff/mixed scan of patch-note lines naming an item,
+  negation-aware: "no longer suffers reduced…" reads as a buff) + price
+  signal (league-over-league change with cliff detection) + combined
+  `value_intuition()` that names the Temple-league-Headhunter pattern when
+  price dropped WITHOUT a balance change. 30 adversarial checks green
+  (`tests/nerf_checks.py`).
+- **Grind Tracker tab** (W4-11 UI) — `gui_overlay/grind_tab.py`: snapshot
+  loadouts ("Breach Tablet x4 | 23% increased Quantity; …"), live run timer,
+  income logging ("divine 0.4, chaos 55"), per-loadout chaos/hour and
+  per-mod returns tables, valued via live poe.ninja rates through the
+  economy provider. Parse helpers covered by 9 checks.
+- **Price Check ledger estimate** — after each check, if your own ledger
+  knows enough of the item's mods it shows "~X divine (n/m mods known)" —
+  explicitly labeled as your history, not a market quote.
+- **Character folios auto-fill** — loading a build (green selector) now
+  creates/updates `data_engine/characters/<slug>/` with the scan AND a
+  generated first-pass review (facts straight from the parse; the AI review
+  of P2 will replace it). Hand-written reviews are never overwritten.
+- **Auto-attendant, real edition** — with an AI brain connected the
+  Companion's idle chatter asks for one short starter built from the player
+  profile + character folios (one small completion per idle interval);
+  zero-token local templates remain the fallback. Config:
+  `companion_attendant` (master, off by default), `companion_attendant_ai`.
+- **Provider adapters verified against real APIs** — poe.ninja adapter uses
+  `PoENinja.get_currency`, game-data adapter queries `knowledge_ledger`
+  directly, capture adapter takes the overlay's live recorder via
+  `attach_recorder()`.
+- **Ghost mode** (W4-14) — when Path of Exile is the foreground window the
+  mirror fades to a whisper (frame at 15% opacity; the ORB stays clearly
+  visible, subtitles and the REC privacy dot stay full) and the overlay
+  stops eating clicks entirely (WS_EX_TRANSPARENT — clicks land in the
+  game). **Hold Ctrl** to make it solid + clickable while you interact.
+  Detection is a passive 350ms foreground-title poll — nothing is ever sent
+  to the game. Config: `game_fade`, `game_click_through` (both default on),
+  `game_fade_frame` (0.15, clamped, junk-proof). New module
+  `gui_overlay/game_watch.py`; 24 checks green (`tests/ghost_checks.py`) —
+  the suite caught a paint-crash path from junk config values before ship.
+
+### Fixed / Added — 2026-07-04 evening batch (Christian's live-testing round)
+- **Ghost mode detection fixed** — a browser tab titled "…Path of Exile…"
+  ghosted the overlay while browsing. Detection now reads the foreground
+  window's PROCESS EXE (PathOfExile*.exe); exact-title match only as
+  fallback; loose title matching forbidden. Ctrl response poll 350→150ms.
+- **Menu windows minimize to the TASKBAR** with the Kalandra icon —
+  `apply_window_identity()` gives top-level chrome windows real
+  Window/minimize/system-menu hints (frameless windows otherwise park at
+  the desktop's bottom-left), and main.py sets the Windows
+  AppUserModelID + app icon (same kalandra.ico as the desktop shortcut).
+- **Owl interview Q2 "no answers" fixed** — chips are now explicitly shown,
+  the panel is force-resized after layout activation, old chips are fully
+  reparented away, a fallback Continue chip guarantees no dead ends, and
+  each question logs its chip count to the log bus.
+- **Clip recording un-slideshowed** — the writer promised 15fps while the
+  machine delivered ~4, so playback fast-forwarded. Now: honest timeline
+  via frame duplication (`plan_writes`, unit-tested), SIMD cvtColor, and
+  downscale-to-1080p before encode. Capture stats (real fps, duplicated
+  frames) show in the save dialog and log. Config: clip_fps, clip_max_width.
+- **"Load my saved PoB builds" unified with the dashboard PoB** — the tab's
+  exe pick now also saves pob_install_dir; the selector derives the install
+  from pob_exe when unset. One PoB, one truth.
+- **PoB folder cleanup** — new `launchers/Relocate PoB Install.bat` (repo root):
+  double-click to move the installed app out of the source clone to
+  `tools/Path of Building Community (PoE2)/` and update config in one shot
+  (native move — close PoB first). The source clone stays for the sim.
+- **Per-character companion orbs** — Character Selector now shows a
+  "Companion orb for selected" dropdown: see and set which orb speaks for
+  each character (`character_orbs` in config); setting a character active
+  switches the mirror to its orb automatically.
+- **Price Check reorganized** — the cramped bottom browser is gone; the
+  official trade site now lives in its own full-size **Trade Site** tab and
+  'Open trade search' pushes the search there and switches tabs. The
+  reclaimed space is a per-mod value board: search tier, why it matters,
+  and YOUR ledger median per mod (sharpens as price-check history grows).
+- **Build Sim: "Set PoB folder…" button** — picks the install, verifies
+  HeadlessWrapper.lua (root or src/), saves pob_install_dir, tells you the
+  next step. No more hand-editing config.json.
+- **Build (PoB) tab: "AI review" button** (W4-05 v1) — the Orb writes a
+  structured review from the full parse + live sim: damage-mechanism
+  deduction (Corrupted Blood scaling and other unusual chains called out
+  explicitly — the corrections layer rides along), gear/passives/supports
+  analysis, sim-verifiable improvement suggestions (nearby nodes, support
+  swaps, weakest slot), and defence gaps. Saved to the character's folio.
+- **Exchange: currency-tab screenshot scan** — instruction + button: OCR a
+  stash-tab screenshot into the holdings table for review before saving.
+- **GGG connect button honesty** — no longer opens the PoE1-era OAuth docs;
+  explains the real state (PoE2 public OAuth pending, letter ready) and the
+  no-login import paths that work today.
+- **Settings: every service row actionable** — sign-in/site buttons for all
+  keyed & login services, dedicated sign-in URLs + optional remembered
+  username for Maxroll/Mobalytics/FilterBlade/poe2wiki/forums, poe.ninja
+  "key" row links to the site (its JSON needs no key).
+- **Gmail: modern auth** — OAuth 2.0 installed-app flow with PKCE (RFC
+  8252/7636), mail-only scope, tokens ONLY in the OS keychain,
+  auto-refreshing XOAUTH2 over implicit-TLS SMTP (`core_engine/
+  email_oauth.py`). App passwords demoted to a clearly-labeled legacy
+  fallback; Gmail is the default provider.
+- **Custom dashboard tabs** — Settings → Custom tabs: add any website as a
+  contained-browser tab or any program (folder + exe) adopted into the
+  dashboard exactly like PoB. Remove any time; applies on dashboard reopen.
+- **Setup & Dependencies window widened** (760→980) — the "Installed ✓"
+  status column was cut off.
+- **New-player build finder + guide roadmaps** — brand-new players (from
+  the interview) get offered the build finder: the owl hands off to a
+  seeded Companion conversation (playstyle Q&A → archetype suggestions →
+  roadmap offer; `core_engine/build_seeker.py`). Paste a guide (or its PoB
+  codes) into the chat and the roadmap engine extracts every variant,
+  parses them through pob_bridge, writes a priced roadmap.md (ledger
+  medians where your history knows an item) + watchlist into a character
+  folio, and points at Live Search for camping the watchlist while
+  leveling. 10 engine checks green.
+- **Own app icon** — new `kalandra.ico` generated from OUR art: the
+  mirror's owl crest in gold on an obsidian disc with the double gold ring
+  and a hint of the orb's aura (multi-resolution 16→256px). No more
+  borrowed Divine Orb.
+- **Graceful shutdown for containerized programs** — closing Kalandra now
+  sends WM_CLOSE to any PoB/PoE Overlay/custom app the dashboard LAUNCHED
+  (terminate only as a 4s fallback) and releases adopted EXTERNAL windows
+  back to the desktop untouched — a separately-running PoB is never
+  closed. No more mangled orphan windows after exit.
+
+### Fixed — 2026-07-04 Build (PoB) tab round 2 (Christian's testing)
+- **View toggle label** now names the view the click takes you TO
+  ("View: Sheet ▣" while reading text, "View: Text ≡" while on the sheet) —
+  it read backwards before.
+- **AI review actually runs** — the reply callback fired on a worker thread
+  where QTimer can't start, so the review silently vanished. Replies now
+  arrive via a queued Qt signal (`review_ready`) on the UI thread.
+- **Scaling profile accuracy** — damage-type scoring no longer counts
+  resistance/regen/attribute rolls (a +35% Fire Res ring was flagging every
+  build as "fire"); the main skill and its supports outweigh gear text 8:1;
+  flat "adds X to Y damage" rolls weigh triple; minion builds are decided by
+  their SKILLS, not a stray minion-damage gear roll. Verified: a Spark build
+  wearing double fire-res now profiles pure lightning/crit; a skeleton build
+  with a fire wand profiles minions-first.
+- **Container view is now the one-page character sheet** — poe.ninja-style:
+  headline DPS/Life/ES/attribute chips, resistances line, the computed
+  scaling profile, full equipment table with every mod, and all skill links
+  (main starred) on a single scrollable page, rendered from YOUR real PoB
+  parse. The "Export sheet (HTML)" file version gains the same resistances
+  + profile sections.
+
+### Fixed — 2026-07-04 corrupt config: "Open in PoB app" + silent settings loss
+- `data_engine/config.json` was truncated mid-string on disk, so
+  `load_config()` silently fell back to DEFAULTS — pob_exe vanished
+  ("Open in PoB app" launched nothing) and every saved setting was being
+  ignored. Repaired: 29 settings salvaged from the corrupt file (only the
+  owl's seen-tabs list was lost — it regenerates), PoB paths re-pointed at
+  the relocated install (exe verified on disk), original preserved as
+  `config.json.corrupt.bak`.
+- **Root cause fixed**: `save_config` now writes ATOMICALLY — fresh temp
+  file, parse-verified, then `os.replace()` over the old one. In-place
+  rewrites of a growing config are what corrupted it; a rename of a
+  complete new file cannot. `load_config` also preserves any corrupt file
+  as `.corrupt.bak` instead of silently eating it.
+
+### Fixed — 2026-07-04 "Open in PoB app" freeze + missing characters
+- **Overlay frozen on top of PoB**: launching PoB popped an
+  application-modal "code is on your clipboard" box that appeared BEHIND
+  PoB (which had just stolen the foreground) — the invisible box blocked
+  input to every Kalandra window, including the always-on-top overlay. The
+  post-launch modal is gone; the message lives in the selector's status
+  line. (If it ever happens again from an old build: Alt+Tab to the hidden
+  dialog and press Enter.)
+- **Selector missing characters that PoB shows**: Kalandra guessed at
+  build folders but never asked PoB itself. It now parses PoB's own
+  Settings.xml for its configured `buildPath` (checked first, outranking
+  every guess) and adds the PoE2 community fork's default user dir
+  (%APPDATA%\Path of Building Community (PoE2)\Builds) to the candidates.
+  Verified headless: a synthetic Settings.xml buildPath is honored and its
+  builds are found. Note: characters listed in PoB's import-from-account
+  screen that were never SAVED as build files still won't appear — only
+  saved .xml builds exist on disk to find.
+
+### Fixed — 2026-07-04 character selector wouldn't open
+- The per-character orb dropdown fired `currentIndexChanged` while the
+  dialog was still under construction (addItem triggers it), hitting a
+  not-yet-created label — the whole selector crashed mid-`__init__` and
+  silently refused to open. Now: label built first, combo populated with
+  signals blocked, handler guarded. The selector's status line also names
+  PoB's configured build folder after each scan, so the list can be
+  verified against what PoB itself shows. (The green medallion glow is
+  unrelated — it simply means a character is active.)
+
+### Changed — 2026-07-04 dashboard tabs grouped into categories
+- The flat 18-tab strip is now two levels: category tabs on top, tools
+  nested inside — 🦉 Companion (Companion, Terminal) · ⚔ Build Planning
+  (Build (PoB), Build Sim, PoB (live), PoE Overlay 2) · 💰 Items & Trading
+  (Price Check, Trade Site, Live Search, Exchange, Reserve/BIS, poe.ninja)
+  · 🔨 Crafting (Crafting, Craft of Exile) · 📊 Loot & Filters (Filter
+  Editor, FilterBlade, Grind Tracker) · 🛠 Other (Issues/Changelog + your
+  custom tabs). Implemented as `GroupedTabs`, a wrapper that speaks the
+  same flat-index QTabWidget dialect the rest of the code was written
+  against — show_tab, lazy web loading, Price-Check→Trade-Site jumps,
+  graceful shutdown and the owl all work unchanged, and the owl's arrow
+  aims at the nested tab header (`current_tab_center_in`).
+
+### Fixed — 2026-07-04 overlay barging in over the dashboard
+- Opening a web-view tab (Trade Site, Craft of Exile, FilterBlade,
+  poe.ninja, Live Search) made the overlay pop back up ON TOP of the
+  dashboard: QtWebEngine's first view briefly recreates native window
+  handles, which fired a spurious Hide on the dashboard, and the overlay's
+  "menu closed" watcher believed it. `_menu_done` now verifies the menu is
+  genuinely gone (still-visible = not done) and the check waits 150ms for
+  the WebEngine transition to settle.
+
+### Added — 2026-07-04 build freshness prompts
+- **The owl now notices stale builds** — loading a character records its
+  file path; when the dashboard opens and the active build file is older
+  than `build_stale_days` (default 3), the owl walks you through pulling
+  the current copy: PoB (live) tab → PoB's own 'Import from account' →
+  save → Kalandra's file-watcher offers the fresh version as your active
+  character. Prompts once per staleness (a new save resets the reminder);
+  logic unit-tested (stale→walkthrough, no re-nag, fresh→quiet). Also adds
+  a generic `walk_through(steps)` API on the owl for future guided flows.
+
+### Changed — 2026-07-04 root declutter + uninstaller
+- **Root folder reorganized** — a fresh visitor now sees `READ_ME_FIRST.md`,
+  `CHANGELOG.md`, `Setup.bat` (plus the load-bearing `main.py`,
+  `version.py`, `requirements.txt`, `LICENSE.md`). Everything else moved:
+  all guides/specs → `docs/`, all launcher .bats → `launchers/` (each now
+  `cd`s to the repo root), maintenance scripts → `scripts/` (path
+  bootstraps updated: repo root resolved one level up). Every
+  cross-reference patched (installer .ps1s, code hint strings, doc links —
+  25 files); full test suite green from the new layout.
+- **Clean uninstaller that doubles as a repair tool** —
+  `launchers/Uninstall Kalandra.bat` → Repair mode: reinstall deps,
+  validate/rescue a corrupt config.json, report configured tool paths that
+  no longer exist, clear stale bytecode, recreate the shortcut, optional
+  self-test. Uninstall mode: per-add-on Keep / Move-out (to
+  %LOCALAPPDATA%\Programs, the standard per-user location) / Delete, your
+  data preserved to Documents\Kalandra-Data by default, and only then the
+  app itself. Nothing deleted without an explicit answer.
+
+### Added — 2026-07-04 shareable release + install lifecycle
+- **Setup.bat detects existing installs** — if a previous run's config or
+  database exists it offers [R]epair / [U]ninstall / [I]nstall-anyway
+  before doing anything, wiring straight into the Uninstall/Repair tool.
+- **Release zip builder** — `launchers/Make Release Zip.bat` →
+  `scripts/make_release_zip.py`: packs a shareable `Kalandra-Setup.zip`
+  onto the Desktop, EXCLUDING everything personal (`data_engine/` with its
+  config client-ids/secrets, player profile, chat threads, ledgers; `.env`;
+  `.git`; multi-GB `tools/`), then re-scans the finished archive for
+  key-shaped strings (sk-/AIza/ghp_/AKIA/xoxb-) and deletes it rather than
+  finish if any are found. Real API keys never ship regardless — they live
+  in Windows Credential Manager, not in files.
+
+### Removed — 2026-07-04 cleanup
+- `STRESS_TEST_AND_PLACEHOLDERS_REPORT.md` (session report, contents long
+  since folded into ROADMAP/CHANGELOG; recoverable from git).
+- `test_real_pob.py` (root-level dev scratch; `tests/stress_test.py` covers
+  the parser; recoverable from git).
+- All `__pycache__/` directories (regenerated automatically).
 
 ### Added
 - **"PoE Overlay 2" containerized tab** (off by default — enable in Settings
@@ -219,5 +515,5 @@ Repo: https://github.com/castleism/Kalandra_Git
 Baseline for this changelog: five dashboard tool tabs (Filter Editor, Currency
 Exchange, Price Check, Crafting Planner, Live Search), PoB live sim, talking
 Divine Orb with AI brains, resumable poe2db/poe2wiki/poe.ninja sync, Obsidian
-vault export, medallion overlay. See `ROADMAP.md` → "Shipped" for the full
+vault export, medallion overlay. See `docs/ROADMAP.md` → "Shipped" for the full
 feature table and `READ_ME_FIRST.md` for the narrative history.

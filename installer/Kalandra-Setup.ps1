@@ -46,19 +46,19 @@ $Components = @(
 
     @{ Id="luajit"; Name="LuaJIT - Path of Building simulator engine";
        Cat="Engine extras"; Credit="Mike Pall; build by ScriptTiger"; Verified="LuaJIT-For-Windows (latest)";
-       Install=@{Kind="terminal"; Cmd="{PY} install_dependencies.py --yes luajit"};
+       Install=@{Kind="terminal"; Cmd="{PY} scripts\install_dependencies.py --yes luajit"};
        Check=@{Kind="file"; File="LuaJIT-For-Windows.exe"; CfgKey="luajit_path"; SaveFile=$true};
        Account=@{Kind="none"}; Paths=@((Join-Path $ProjectRoot "tools\luajit")) }
 
     @{ Id="rhubarb"; Name="Rhubarb Lip Sync - talking-orb mouth shapes";
        Cat="Engine extras"; Credit="Daniel Wolf"; Verified="Rhubarb 1.14.0";
-       Install=@{Kind="terminal"; Cmd="{PY} install_dependencies.py --yes rhubarb"};
+       Install=@{Kind="terminal"; Cmd="{PY} scripts\install_dependencies.py --yes rhubarb"};
        Check=@{Kind="file"; File="rhubarb.exe"; CfgKey="rhubarb_path"; SaveFile=$true};
        Account=@{Kind="none"}; Paths=@((Join-Path $ProjectRoot "tools\rhubarb")) }
 
     @{ Id="pob_source"; Name="Path of Building 2 source - headless simulator";
        Cat="Engine extras"; Credit="Path of Building Community"; Verified="PathOfBuilding-PoE2 (latest)";
-       Install=@{Kind="terminal"; Cmd="{PY} install_dependencies.py --yes pob_source"};
+       Install=@{Kind="terminal"; Cmd="{PY} scripts\install_dependencies.py --yes pob_source"};
        Check=@{Kind="file"; File="HeadlessWrapper.lua"; CfgKey="pob_install_dir"; SaveFile=$false};
        Account=@{Kind="none"}; Paths=@((Join-Path $ProjectRoot "tools")) }
 
@@ -453,7 +453,7 @@ foreach ($comp in $Components) {
                 elseif ($a.Kind -eq "apikey") {
                     $val = Read-Secret ("Paste your API key for " + $t.Name + ".`nStored securely in the Windows keychain.")
                     if ($val -ne $null -and $val.Trim() -ne "") {
-                        $r = Invoke-Py @((Join-Path $ProjectRoot "configure.py"),"set-secret",$a.Service) $val
+                        $r = Invoke-Py @((Join-Path $ProjectRoot "scripts\configure.py"),"set-secret",$a.Service) $val
                         $st.Text = "Account: " + ($r.Trim()); $st.ForeColor=$green
                         Notify "Connect Account" $r.Trim()
                     }
@@ -510,7 +510,7 @@ $script:LogBox.Font=New-Object System.Drawing.Font("Consolas",8); $form.Controls
 # ---- database freshness + bundled-DB import ----
 function Refresh-Freshness {
     try {
-        $out = Invoke-Py @((Join-Path $ProjectRoot "db_status.py"), "--json")
+        $out = Invoke-Py @((Join-Path $ProjectRoot "scripts\db_status.py"), "--json")
         $j = $null
         try { $j = $out | ConvertFrom-Json } catch {}
         if ($j -and $j.exists) {
@@ -519,7 +519,7 @@ function Refresh-Freshness {
                 $s.poe2db.as_of, $s.poe2db.entries, $s.poe2wiki.as_of, $s.poe_ninja.as_of, $s.game_data.as_of, $j.total_entries)
             $freshLabel.ForeColor = $green
         } else {
-            $freshLabel.Text = "Databases: none yet (run Update Database.bat to scrape, or Import bundled DB)."
+            $freshLabel.Text = "Databases: none yet (run launchers\Update Database.bat to scrape, or Import bundled DB)."
             $freshLabel.ForeColor = $muted
         }
     } catch { $freshLabel.Text = "Databases: (status unavailable)"; $freshLabel.ForeColor = $muted }
@@ -583,7 +583,7 @@ $finishBtn.Add_Click({
             "Setup saved. Anything you skipped can be added later by re-running this installer.`n`nLaunch Kalandra now?",
             "Finish", [System.Windows.Forms.MessageBoxButtons]::YesNo)
         if ($launch -eq [System.Windows.Forms.DialogResult]::Yes) {
-            $bat = Join-Path $ProjectRoot "Windows Diagnostic Launcher.bat"
+            $bat = Join-Path $ProjectRoot "launchers\Windows Diagnostic Launcher.bat"
             if (Test-Path $bat) { Start-Process -FilePath $bat -WorkingDirectory $ProjectRoot }
         }
         $form.Close()

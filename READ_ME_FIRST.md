@@ -59,14 +59,14 @@ copies, or links you to them. The installer can help you fetch and locate each.
 ## 3. Installing
 
 1. Run the installer (`Kalandra-Setup.ps1` via the provided launcher, or
-   `Install Dependencies.bat`). It's a step-by-step hub: each dependency has its
+   `launchers/Install Dependencies.bat`). It's a step-by-step hub: each dependency has its
    own row with **Install** (opens the download/repo), **Check Location** (point
    Kalandra at the file and verify it's found), and **Connect Account** where
    relevant. It doubles as a repair tool — re-run it any time to re-verify.
 2. The installer lists, per dependency, which revision is verified to work.
-3. Launch with **Kalandra.bat** (no console) or **Windows Diagnostic Launcher.bat**
+3. Launch with **launchers/Kalandra.bat** (no console) or **launchers/Windows Diagnostic Launcher.bat**
    (keeps a console open — use this if something crashes; it captures the error).
-4. A desktop shortcut can be created with **Create Desktop Shortcut.bat**.
+4. A desktop shortcut can be created with **launchers/Create Desktop Shortcut.bat**.
 
 If a crash ever happens, look for `data_engine\crash.log` — it records the error.
 
@@ -101,7 +101,7 @@ ruby = clear, sapphire = connect). Contains:
 
 - **GGG account (OAuth).** "Connect GGG account" runs the official OAuth 2.1
   PKCE sign-in in your browser once GGG issues a client_id (send them
-  `GGG_OAuth_Application_Letter.md`; paste the id into the field). "Test PoE2
+  `docs/GGG_OAuth_Application_Letter.md`; paste the id into the field). "Test PoE2
   API (no login)" proves the trade API is reachable right now.
 - **GitHub (issue & changelog sync).** Paste a personal-access token
   (`repo` scope — the "Get a key" button opens the right page) and the
@@ -323,3 +323,68 @@ Ordered roughly by how close each is. ToS notes included where it matters.
 
 *Kalandra is a personal, ToS-respecting companion: it thinks alongside you, it
 never plays for you.*
+
+
+## Folder map (reorganized 2026-07-04)
+
+The root stays clean: this readme, `CHANGELOG.md`, and `Setup.bat` (plus `main.py`/`version.py`/`requirements.txt`/`LICENSE.md`, which the app itself needs at the root). Everything else lives in:
+
+- `docs/` — every guide and spec (ROADMAP, INSTALL, DESIGN_COMPANION, security, testing, setup guides)
+- `launchers/` — the double-click .bats: launch Kalandra, diagnostic launcher, update DB, build vault, shortcut, relocate PoB, **Uninstall / Repair**
+- `scripts/` — maintenance Python (update_db, configure, install_dependencies, ...)
+- `installer/` — Setup.bat's PowerShell machinery
+- `core_engine/`, `gui_overlay/`, `tests/` — the app
+- `data_engine/` — YOUR data (builds, ledgers, folios, knowledge DB)
+- `tools/` — bundled add-ons (PoB, Obsidian, LuaJIT, ...)
+
+
+## Status — 2026-07-04 (the Companion wave + live-testing round)
+
+Everything shipped today is itemized in `CHANGELOG.md` (owl guide +
+interview, Companion tab, ghost mode, grouped dashboard, Price Check
+reorg, character sheet one-pager, Gmail OAuth, custom tabs, uninstaller/
+repair, release-zip builder, and the truncation-bug recovery). This
+section is the honest ledger of what's OPEN.
+
+### Known issues (documented, not yet fixed)
+
+1. **Remote-edit truncation (environment)** — file writes that GROW a file
+   via the assistant's edit path can truncate on disk. Mitigated: all
+   repairs now delivered as delete-and-recreate; config saves are atomic
+   (temp + os.replace). If the app ever dies silently again, run
+   `launchers\Windows Diagnostic Launcher.bat` and check for SyntaxError.
+2. **config.json.corrupt.bak** — holds the pre-repair config tail; safe to
+   delete once you've confirmed no settings are missing.
+3. **PoB import-list characters** — characters visible in PoB's
+   import-from-account screen but never saved have no .xml on disk; the
+   Character Selector cannot list them until saved once in PoB.
+4. **Old Kalandra-Setup.zip** (if still on your Desktop) predates the
+   truncation repairs — delete and rebuild.
+
+### Checks on Christian's side
+
+- [ ] Restart Kalandra; confirm: selector opens, its status line's folder
+      matches PoB's Settings.xml buildPath, and the list matches PoB.
+- [ ] "Open in PoB app" launches without freezing the overlay.
+- [ ] Web tabs (Trade Site / Craft of Exile / poe.ninja) no longer summon
+      the overlay over the dashboard.
+- [ ] Ghost mode: fades in game, never in a browser; Ctrl restores.
+- [ ] Build tab: sheet view renders; AI review returns text; scaling
+      profile names the right damage type on your real characters.
+- [ ] Run `python tests/stress_test.py` + the check files in tests/.
+- [ ] Re-run `launchers\Make Release Zip.bat` for a clean shareable zip.
+- [ ] Capture tab screenshots into installer/assets/tab_previews/ (W4-15).
+- [ ] One-time: Google OAuth Desktop client for Gmail connect (Settings).
+
+### Next up on the roadmap (docs/ROADMAP.md, W4 table)
+
+1. **W4-04 PoB import + character deep-scan** — the unblocker for
+   per-character orb threads, auto-reviews, and BIS sims.
+2. **W4-05 remainder** — auto-review on import + standard-shuffle
+   detection (nerf_intel is built and waiting for its DB/ninja feed,
+   W4-06).
+3. **W4-08** — BIS bank ↔ sims, live-search auto-creation from roadmap
+   watchlists, notifications (the XOAUTH2 sender is ready).
+4. **W4-20 install modes** — Local Copy / Contained / Browser-based per
+   add-on; the uninstaller's Move-out is the migration path.
+5. **W4-09/10** — researched auto-attendant, then the OBS streamer suite.

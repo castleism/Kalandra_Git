@@ -58,8 +58,11 @@ def _fmt(v):
         return _html.escape(str(v))
 
 
-def build_character_sheet_html(view):
-    """view = overlay.current_build_view() dict. Returns a full HTML page."""
+def build_character_sheet_html(view, embedded=False):
+    """view = overlay.current_build_view() dict. Returns a full HTML page.
+    embedded=True emits QTextBrowser-safe markup (Qt's rich-text engine has
+    no flexbox, so the stat chips become a styled table row) — this powers
+    the Build (PoB) tab's one-page, poe.ninja-style container view."""
     view = view or {}
     full = view.get("full") if isinstance(view.get("full"), dict) else {}
     name = view.get("character") or "Exile"
@@ -89,8 +92,48 @@ def build_character_sheet_html(view):
                      f"<span>{label}</span></div>")
         if len(chips) >= 10:
             break
-    if chips:
+    if chips and embedded:
+        # QTextBrowser: chips as a one-row table with inline styles.
+        cells = []
+        for key, label in _CHIP_STATS:
+            v = stats.get(key)
+            if v in (None, "", "0", "0.0"):
+                continue
+            cells.append(
+                "<td style='background:#14181f;border:1px solid #8a6d3b;"
+                "padding:6px 12px;'>"
+                f"<b style='color:#f0d9a8;font-size:16px;'>{_fmt(v)}</b><br>"
+                f"<span style='color:#9aa4b2;font-size:11px;'>{label}</span></td>")
+            if len(cells) >= 10:
+                break
+        out.append("<table cellspacing='6'><tr>" + "".join(cells[:5])
+                   + "</tr><tr>" + "".join(cells[5:]) + "</tr></table>")
+    elif chips:
         out.append("<div class='chips'>" + "".join(chips) + "</div>")
+    # Resistances line (poe.ninja shows these front and center).
+    res_bits = []
+    for key, label, col in (("FireResist", "Fire", "#e87284"),
+                            ("ColdResist", "Cold", "#7aa2e8"),
+                            ("LightningResist", "Lightning", "#f0d9a8"),
+                            ("ChaosResist", "Chaos", "#c98ae8")):
+        v = stats.get(key)
+        if v not in (None, ""):
+            res_bits.append(f"<b style='color:{col};'>{_fmt(v)}%</b> {label}")
+    if res_bits:
+        out.append("<div class='meta'>Resistances: " + " · ".join(res_bits)
+                   + "</div>")
+    # Scaling profile (computed from the parse — see pob_bridge).
+    sc = view.get("scaling") or {}
+    if sc.get("damage_types") or sc.get("mechanics"):
+        bits = []
+        if sc.get("damage_types"):
+            bits.append("scales via <b style='color:#f0d9a8;'>"
+                        + _html.escape(", ".join(sc["damage_types"][:3])) + "</b>")
+        if sc.get("mechanics"):
+            bits.append("mechanics: "
+                        + _html.escape(", ".join(sc["mechanics"][:4])))
+        bits.append("crit-based" if sc.get("crit_based") else "non-crit")
+        out.append("<div class='meta'>Profile: " + " · ".join(bits) + "</div>")
     if view.get("sim"):
         out.append(f"<div class='meta'>Live PoB engine: "
                    f"{_html.escape(str(view['sim']))}</div>")

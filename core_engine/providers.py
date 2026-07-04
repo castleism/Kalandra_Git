@@ -1,0 +1,263 @@
+"""
+CORE_ENGINE/PROVIDERS.PY — every third-party tool behind a swappable interface.
+
+North-star rule from docs/DESIGN_COMPANION.md: PoB, poe.ninja, Craft of Exile,
+the trade site, OBS — all modules, never load-bearing walls. Feature code
+asks the registry for a capability; the day official APIs (or an
+acquisition) replace a tool, ONE adapter changes and no feature code moves.
+
+    from core_engine.providers import get_provider
+    econ = get_provider("economy")        # -> EconomyProvider or None
+    if econ and econ.available():
+        rates = econ.currency_rates("Standard")
+
+Adapters wrap the EXISTING modules lazily (nothing imports heavy deps at
+module load), and every method degrades to None/empty rather than raising —
+callers stay simple. Pure Python; headless-importable; stress-testable.
+"""
+
+from abc import ABC, abstractmethod
+
+
+# ---------------------------------------------------------------------------
+# Interfaces (the contracts feature code may rely on)
+# ---------------------------------------------------------------------------
+
+class Provider(ABC):
+    """Base: every provider can say whether its backing tool is usable."""
+    name = "provider"
+
+    def available(self):
+        return True
+
+
+class BuildCalculator(Provider):
+    """Build math. Today: headless Path of Building. Later: native calc."""
+    name = "build_calculator"
+
+    @abstractmethod
+    def parse_build(self, code_or_xml):
+        """PoB code / XML -> normalized build dict (or {'error': ...})."""
+
+    @abstractmethod
+    def stats_summary(self):
+        """Short text of the active build's computed stats, '' if none."""
+
+
+class EconomyProvider(Provider):
+    """Market data. Today: poe.ninja public JSON. Later: official API."""
+    name = "economy"
+
+    @abstractmethod
+    def currency_rates(self, league):
+        """-> {currency_name: chaos_value} or {}."""
+
+
+class TradeSearchProvider(Provider):
+    """Item search. Today: official trade-site URL builder (player clicks).
+    Later: official trade API. NEVER auto-buys — ToS hard rule."""
+    name = "trade_search"
+
+    @abstractmethod
+    def search_url(self, item_info, league):
+        """Parsed item info -> URL string the player can open, or ''."""
+
+
+class CraftSimulator(Provider):
+    """Craft planning/odds. Today: local planner + Craft of Exile link-out."""
+    name = "craft_simulator"
+
+    @abstractmethod
+    def plan(self, goal_text):
+        """Plain-language goal -> plan text/dict, or None."""
+
+
+class GameDataProvider(Provider):
+    """Game knowledge. Today: scraped poe2db/wiki SQLite. Later: API/files."""
+    name = "game_data"
+
+    @abstractmethod
+    def search(self, term, limit=5):
+        """-> list of text snippets (possibly empty)."""
+
+
+class CaptureProvider(Provider):
+    """Recording/replay. Today: built-in recorder; OBS websocket is W4-10."""
+    name = "capture"
+
+    @abstractmethod
+    def is_recording(self):
+        """-> bool"""
+
+
+# ---------------------------------------------------------------------------
+# Current adapters (lazy imports; every call fails soft)
+# ---------------------------------------------------------------------------
+
+class PobCalculator(BuildCalculator):
+    def __init__(self):
+        self._bridge = None
+        self._sim = None
+
+    def _get_bridge(self):
+        if self._bridge is None:
+            try:
+                from core_engine.pob_bridge import KalandraPoBBridge
+                self._bridge = KalandraPoBBridge()
+            except Exception:
+                self._bridge = False
+        return self._bridge or None
+
+    def available(self):
+        return self._get_bridge() is not None
+
+    def parse_build(self, code_or_xml):
+        b = self._get_bridge()
+        if not b:
+            return {"error": "PoB bridge unavailable"}
+        try:
+            return b.extract_full_build(code_or_xml)
+        except Exception as e:
+            return {"error": str(e)}
+
+    def attach_sim(self, pob_sim):
+        """The live LuaJIT sim is owned by the overlay; it hands it in here."""
+        self._sim = pob_sim
+
+    def stats_summary(self):
+        try:
+            if self._sim and self._sim.has_build():
+                return self._sim.stats_summary() or ""
+        except Exception:
+            pass
+        return ""
+
+
+class PoeNinjaEconomy(EconomyProvider):
+    def __init__(self):
+        self._client = None
+
+    def _get(self):
+        if self._client is None:
+            try:
+                from core_engine.poe_ninja import PoENinja
+                self._client = PoENinja()
+            except Exception:
+                self._client = False
+        return self._client or None
+
+    def available(self):
+        c = self._get()
+        try:
+            return bool(c and c.available())
+        except Exception:
+            return False
+
+    def currency_rates(self, league):
+        c = self._get()
+        if not c:
+            return {}
+        try:
+            rows = c.get_currency(league) or []
+            return {r["name"]: float(r["value"]) for r in rows
+                    if r.get("name") and r.get("value") is not None}
+        except Exception:
+            return {}
+
+
+class OfficialTradeSearch(TradeSearchProvider):
+    def search_url(self, item_info, league):
+        try:
+            from core_engine.trade_tools import trade_search_url
+            return trade_search_url(item_info, league) or ""
+        except Exception:
+            return ""
+
+
+class LocalCraftPlanner(CraftSimulator):
+    def plan(self, goal_text):
+        try:
+            from core_engine.trade_tools import offline_craft_guidance
+            return offline_craft_guidance(goal_text)
+        except Exception:
+            return None
+
+
+class ScrapedGameData(GameDataProvider):
+    def search(self, term, limit=5):
+        """LIKE search over the knowledge_ledger (same table the RAG uses)."""
+        t = str(term or "").strip()
+        if not t:
+            return []
+        try:
+            from core_engine.database_handler import KalandraDBHandler
+            db = KalandraDBHandler()
+            try:
+                rows = db.cursor.execute(
+                    "SELECT topic_tag, content_payload FROM knowledge_ledger "
+                    "WHERE topic_tag LIKE ? OR content_payload LIKE ? "
+                    "LIMIT ?", (f"%{t}%", f"%{t}%", int(limit))).fetchall()
+                return [f"{r[0]}: {r[1]}" for r in rows]
+            finally:
+                try:
+                    db.close()
+                except Exception:
+                    pass
+        except Exception:
+            return []
+
+
+class BuiltinCapture(CaptureProvider):
+    """The overlay owns the live ScreenRecorder; it hands it in here so any
+    feature can ask 'are we recording?' without importing the GUI stack."""
+
+    def __init__(self):
+        self._rec = None
+
+    def attach_recorder(self, recorder):
+        self._rec = recorder
+
+    def is_recording(self):
+        try:
+            return bool(self._rec and self._rec.is_recording())
+        except Exception:
+            return False
+
+
+# ---------------------------------------------------------------------------
+# Registry
+# ---------------------------------------------------------------------------
+
+_REGISTRY = {}
+_DEFAULTS = {
+    "build_calculator": PobCalculator,
+    "economy": PoeNinjaEconomy,
+    "trade_search": OfficialTradeSearch,
+    "craft_simulator": LocalCraftPlanner,
+    "game_data": ScrapedGameData,
+    "capture": BuiltinCapture,
+}
+
+
+def get_provider(name):
+    """Singleton per capability; None for unknown names (never raises)."""
+    if name in _REGISTRY:
+        return _REGISTRY[name]
+    cls = _DEFAULTS.get(name)
+    if cls is None:
+        return None
+    try:
+        inst = cls()
+    except Exception:
+        return None
+    _REGISTRY[name] = inst
+    return inst
+
+
+def set_provider(name, instance):
+    """Swap point: official-API adapters (or tests) install themselves here."""
+    _REGISTRY[name] = instance
+
+
+def capabilities():
+    return sorted(_DEFAULTS.keys())

@@ -62,13 +62,18 @@ class ScreenRecorder:
     """Threaded screen recorder producing a real MP4 (and optional WAV audio)."""
 
     def __init__(self, output_dir="data_engine/clips", fps=15,
-                 monitor_index=1, capture_audio=True, audio_samplerate=44100):
+                 monitor_index=1, capture_audio=True, audio_samplerate=44100,
+                 max_width=1920):
         self.output_dir = output_dir
         self.fps = max(1, int(fps))
         # mss.monitors[0] = the union of all monitors, [1] = the primary monitor.
         self.monitor_index = monitor_index
         self.capture_audio = bool(capture_audio and AUDIO_AVAILABLE)
         self.audio_samplerate = audio_samplerate
+        # Frames wider than this are downscaled before encoding. Encoding a
+        # 1440p/4K frame in software is the main reason clips used to play
+        # like slideshows; 1080p-ish is fast and plenty for build clips.
+        self.max_width = max(320, int(max_width)) if max_width else None
 
         self._thread = None
         self._stop_flag = threading.Event()
@@ -78,6 +83,7 @@ class ScreenRecorder:
         self._audio_path = None
         self._audio_frames = []
         self._audio_stream = None
+        self.last_stats = {}   # filled at stop(): grabbed/written/duplicated/fps
 
     # -- public API ------------------------------------------------------------
     @property
@@ -147,7 +153,8 @@ class ScreenRecorder:
                 pass
             audio_out = self._write_wav()
 
-        return {"video": self._video_path, "audio": audio_out}
+        return {"video": self._video_path, "audio": audio_out,
+                "stats": dict(self.last_stats)}
 
     # -- internals -------------------------------------------------------------
     def _audio_callback(self, indata, frames, time_info, status):
@@ -168,44 +175,100 @@ class ScreenRecorder:
         except Exception:
             return None
 
+    @staticmethod
+    def plan_writes(elapsed, frame_interval, written, max_burst):
+        """How many copies of the CURRENT frame to write so the file's
+        timeline stays in step with wall-clock time.
+
+        The old loop wrote each grabbed frame exactly once at whatever rate
+        the machine achieved, while the file header promised full fps — so a
+        slow grab/encode produced a fast-forwarded slideshow. Duplicating
+        the newest frame into every elapsed slot keeps playback speed HONEST
+        (1s recorded == 1s played) no matter how slow capture runs.
+
+        Pure math (unit-tested): due = slots elapsed since start; write at
+        least 1, at most max_burst (so a system stall can't dump thousands
+        of copies)."""
+        due = int(elapsed / frame_interval) + 1
+        reps = due - int(written)
+        if reps < 1:
+            reps = 1
+        if reps > max_burst:
+            reps = max_burst
+        return reps
+
+    @staticmethod
+    def output_size(width, height, max_width):
+        """Downscaled (even-dimension) encode size. Even numbers because
+        many codecs refuse odd dimensions."""
+        w, h = int(width), int(height)
+        if max_width and w > max_width:
+            h = int(h * (max_width / float(w)))
+            w = int(max_width)
+        w -= w % 2
+        h -= h % 2
+        return max(2, w), max(2, h)
+
     def _capture_loop(self):
-        """Grab the primary screen at a steady fps and write H.264/MP4 frames."""
+        """Grab the screen as fast as the machine allows and keep the FILE
+        timeline honest by duplicating the newest frame into every fps slot
+        that has elapsed (see plan_writes). Conversion is cv2.cvtColor (SIMD)
+        instead of a numpy slice-copy, and frames above max_width are
+        downscaled before encoding — both big per-frame wins."""
         frame_interval = 1.0 / self.fps
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
         writer = None
+        max_burst = self.fps * 2
+        grabbed = written = duplicated = 0
+        start = None
 
         with mss.mss() as sct:
             # Pick the requested monitor, falling back to primary if needed.
             monitors = sct.monitors
             idx = self.monitor_index if self.monitor_index < len(monitors) else 1
             monitor = monitors[idx]
-            width = monitor["width"]
-            height = monitor["height"]
+            out_w, out_h = self.output_size(monitor["width"], monitor["height"],
+                                            self.max_width)
 
-            writer = cv2.VideoWriter(self._video_path, fourcc, self.fps, (width, height))
+            writer = cv2.VideoWriter(self._video_path, fourcc, self.fps,
+                                     (out_w, out_h))
             if not writer.isOpened():
                 # Codec problem -> try a more universally available one.
                 fourcc = cv2.VideoWriter_fourcc(*"XVID")
                 self._video_path = os.path.splitext(self._video_path)[0] + ".avi"
-                writer = cv2.VideoWriter(self._video_path, fourcc, self.fps, (width, height))
+                writer = cv2.VideoWriter(self._video_path, fourcc, self.fps,
+                                         (out_w, out_h))
 
-            next_t = time.time()
+            start = time.time()
             while not self._stop_flag.is_set():
                 shot = sct.grab(monitor)
-                # mss returns BGRA; OpenCV wants BGR.
-                frame = np.asarray(shot)[:, :, :3]
-                writer.write(frame)
-
-                next_t += frame_interval
-                sleep_for = next_t - time.time()
+                grabbed += 1
+                # mss returns BGRA; cvtColor is contiguous + SIMD-fast.
+                frame = cv2.cvtColor(np.asarray(shot), cv2.COLOR_BGRA2BGR)
+                if (frame.shape[1], frame.shape[0]) != (out_w, out_h):
+                    frame = cv2.resize(frame, (out_w, out_h),
+                                       interpolation=cv2.INTER_AREA)
+                reps = self.plan_writes(time.time() - start, frame_interval,
+                                        written, max_burst)
+                for _ in range(reps):
+                    writer.write(frame)
+                written += reps
+                duplicated += reps - 1
+                # Sleep only if we're AHEAD of the timeline.
+                next_slot = start + written * frame_interval
+                sleep_for = next_slot - time.time()
                 if sleep_for > 0:
                     time.sleep(sleep_for)
-                else:
-                    # We're behind; reset cadence so we don't spiral.
-                    next_t = time.time()
 
         if writer is not None:
             writer.release()
+        wall = (time.time() - start) if start else 0.0
+        self.last_stats = {
+            "grabbed": grabbed, "written": written, "duplicated": duplicated,
+            "capture_fps": round(grabbed / wall, 1) if wall > 0 else 0.0,
+            "target_fps": self.fps, "seconds": round(wall, 1),
+            "size": f"{out_w}x{out_h}" if grabbed else "",
+        }
 
 
 # Interactive self-test (records 3 seconds of your screen).

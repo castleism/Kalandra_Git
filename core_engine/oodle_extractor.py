@@ -7,7 +7,7 @@ STATUS: EXPERIMENTAL. The bundle/index binary format and Oodle calling
 convention are implemented from public documentation, but I can't validate this
 without the real game files + DLL on a Windows machine. The `self_test()` method
 reports exactly which steps work so it can be fixed iteratively. Until it passes,
-use the external-converter route (EXTRACTOR_SETUP.md).
+use the external-converter route (docs/EXTRACTOR_SETUP.md).
 
 Design:
   * locate the install + oo2core_*.dll

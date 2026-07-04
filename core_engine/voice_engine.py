@@ -529,7 +529,7 @@ class VoiceEngine:
         env = os.environ.get("RHUBARB_PATH")
         if env and os.path.exists(env):
             return env
-        # config (written by install_dependencies.py)
+        # config (written by scripts/install_dependencies.py)
         try:
             with open(os.path.join("data_engine", "config.json"), "r", encoding="utf-8") as f:
                 cp = json.load(f).get("rhubarb_path")

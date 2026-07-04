@@ -183,12 +183,15 @@ class DependenciesDialog(KalandraFrameDialog):
         try:
             scr = QApplication.primaryScreen()
             avail = scr.availableGeometry() if scr else None
-            h = 880
+            # 980 wide: at 760 the right-hand "Installed" status column was
+            # cut off, so core features looked like they had no status at all.
+            w, h = 980, 880
             if avail is not None:
                 h = min(h, max(460, avail.height() - 90))
-            self.resize(760, h)
+                w = min(w, max(760, avail.width() - 120))
+            self.resize(w, h)
         except Exception:
-            self.resize(760, 760)
+            self.resize(980, 760)
 
     def _build(self):
         root = self.body

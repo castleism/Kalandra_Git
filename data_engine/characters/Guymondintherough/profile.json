@@ -1,0 +1,646 @@
+{
+  "name": "Guymondintherough",
+  "updated": "2026-07-04 11:28:28",
+  "build": {
+    "stats": {
+      "AverageHit": "0",
+      "AverageBurstDamage": "0",
+      "Speed": "1",
+      "CritMultiplier": "2",
+      "HitChance": "100",
+      "TotalDPS": "0",
+      "TotalDot": "0",
+      "WithDotDPS": "0",
+      "CorruptingBloodDPS": "593475.46353333",
+      "WithBleedDPS": "0",
+      "WithIgniteDPS": "0",
+      "WithPoisonDPS": "0",
+      "TotalDotDPS": "593475.46353333",
+      "CullingDPS": "0",
+      "ReservationDPS": "0",
+      "CombinedDPS": "593475.46353333",
+      "ManaCost": "0",
+      "ManaPercentCost": "0",
+      "ManaPerSecondCost": "0",
+      "ManaPercentPerSecondCost": "0",
+      "LifeCost": "0",
+      "LifePercentCost": "0",
+      "LifePerSecondCost": "0",
+      "LifePercentPerSecondCost": "0",
+      "ESCost": "0",
+      "ESPerSecondCost": "0",
+      "ESPercentPerSecondCost": "0",
+      "RageCost": "0",
+      "SoulCost": "0",
+      "Str": "508",
+      "ReqStr": "390",
+      "Dex": "103",
+      "ReqDex": "96",
+      "Int": "88",
+      "ReqInt": "75",
+      "Devotion": "0",
+      "Tribute": "0",
+      "TotalEHP": "23852.363812777",
+      "PhysicalMaximumHitTaken": "4070",
+      "LightningMaximumHitTaken": "9097",
+      "FireMaximumHitTaken": "5170",
+      "ColdMaximumHitTaken": "12346",
+      "ChaosMaximumHitTaken": "4675",
+      "Darkness": "0",
+      "ReservedDarkness": "0",
+      "Life": "1935",
+      "Spec:LifeInc": "35",
+      "LifeUnreserved": "1935",
+      "LifeRecoverable": "1935",
+      "LifeUnreservedPercent": "100",
+      "LifeRegenRecovery": "28.5",
+      "LifeLeechGainRate": "0",
+      "Mana": "545",
+      "Spec:ManaInc": "-10",
+      "ManaUnreserved": "545",
+      "ManaUnreservedPercent": "100",
+      "ManaRegenRecovery": "33.8",
+      "ManaLeechGainRate": "0",
+      "Spirit": "331",
+      "SpiritUnreserved": "100",
+      "SpiritUnreservedPercent": "30.211480362538",
+      "EnergyShield": "1168",
+      "EnergyShieldRecoveryCap": "1168",
+      "Spec:EnergyShieldInc": "310",
+      "EnergyShieldRegenRecovery": "0",
+      "EnergyShieldLeechGainRate": "0",
+      "RageRegenRecovery": "0",
+      "Evasion": "4688",
+      "Spec:EvasionInc": "0",
+      "EvadeChance": "34",
+      "MeleeEvadeChance": "34",
+      "ProjectileEvadeChance": "34",
+      "SpellEvadeChance": "34",
+      "SpellProjectileEvadeChance": "34",
+      "DeflectionRating": "0",
+      "DeflectChance": "0",
+      "Armour": "9206",
+      "Spec:ArmourInc": "36",
+      "PhysicalDamageReduction": "53",
+      "EffectiveBlockChance": "76.96",
+      "EffectiveSpellBlockChance": "0",
+      "AttackDodgeChance": "0",
+      "SpellDodgeChance": "0",
+      "EffectiveSpellSuppressionChance": "0",
+      "FireResist": "24",
+      "FireResistOverCap": "0",
+      "ColdResist": "75",
+      "ColdResistOverCap": "26",
+      "LightningResist": "64",
+      "LightningResistOverCap": "0",
+      "ChaosResist": "44",
+      "ChaosResistOverCap": "0",
+      "EffectiveMovementSpeedMod": "1.38",
+      "PresenceRadiusMetres": "4",
+      "FullDPS": "620384.94648746",
+      "FullDotDPS": "594186.4472093",
+      "PowerCharges": "0",
+      "PowerChargesMax": "3",
+      "FrenzyCharges": "0",
+      "FrenzyChargesMax": "3",
+      "EnduranceCharges": "0",
+      "EnduranceChargesMax": "3",
+      "ActiveTotemLimit": "0"
+    },
+    "items": [
+      {
+        "name": "Dense Ultimate Mana Flask of the Sylvan",
+        "mods": [
+          "Gains 0.25 Charges per Second",
+          "45% increased Recovery rate"
+        ],
+        "rarity": "MAGIC",
+        "base": "Dense Ultimate Mana Flask of the Sylvan",
+        "slot": "Flask 2"
+      },
+      {
+        "name": "Effervescent Ultimate Life Flask of the Sylvan",
+        "mods": [
+          "Gains 0.25 Charges per Second",
+          "25% of Recovery applied Instantly"
+        ],
+        "rarity": "MAGIC",
+        "base": "Effervescent Ultimate Life Flask of the Sylvan",
+        "slot": "Flask 1"
+      },
+      {
+        "name": "Darkness Enthroned",
+        "mods": [
+          "Flasks gain 0.17 charges per Second",
+          "99% increased effect of Socketed Augment Items",
+          "This item gains bonuses from Socketed Items as though it was a Body Armour"
+        ],
+        "rarity": "UNIQUE",
+        "base": "Fine Belt",
+        "slot": "Belt"
+      },
+      {
+        "name": "Rite of Passage",
+        "mods": [
+          "Possessed by Spirit Of The Owl for 18 seconds on use"
+        ],
+        "rarity": "UNIQUE",
+        "base": "Golden Charm",
+        "slot": "Charm 3"
+      },
+      {
+        "name": "Lustrous Dousing Charm of the Distiller",
+        "mods": [
+          "24% reduced Charges per use"
+        ],
+        "rarity": "MAGIC",
+        "base": "Lustrous Dousing Charm of the Distiller",
+        "slot": "Charm 2"
+      },
+      {
+        "name": "Nascent Hope",
+        "mods": [
+          "22% Chance to gain a Charge when you kill an enemy"
+        ],
+        "rarity": "UNIQUE",
+        "base": "Thawing Charm",
+        "slot": "Charm 1"
+      },
+      {
+        "name": "Storm Loop",
+        "mods": [
+          "-2 Prefix Modifiers allowed",
+          "+2 Suffix Modifiers allowed",
+          "+43 to Strength",
+          "+16% to all Elemental Resistances",
+          "+36% to Cold Resistance",
+          "+40% to Lightning Resistance"
+        ],
+        "rarity": "RARE",
+        "base": "Tenebrous Ring",
+        "slot": "Ring 2"
+      },
+      {
+        "name": "Skull Roar",
+        "mods": [
+          "Adds 44 to 62 Physical Damage",
+          "+6 to Level of all Melee Skills",
+          "+30 to Strength",
+          "Gain 37 Mana per enemy killed"
+        ],
+        "rarity": "RARE",
+        "base": "Tawhoan Greatclub",
+        "slot": "Weapon 1"
+      },
+      {
+        "name": "Svalinn",
+        "mods": [
+          "+70 to maximum Runic Ward",
+          "297% increased Armour",
+          "Chance to Block Damage is Lucky",
+          "You take 13% of damage from Blocked Hits"
+        ],
+        "rarity": "UNIQUE",
+        "base": "Crucible Tower Shield",
+        "slot": "Weapon 2"
+      },
+      {
+        "name": "Dragon Gorget",
+        "mods": [
+          "+9% to all Elemental Resistances",
+          "+5 to Level of all Melee Skills",
+          "+39 to Strength",
+          "+13% to all Elemental Resistances"
+        ],
+        "rarity": "RARE",
+        "base": "Pearlescent Amulet",
+        "slot": "Amulet"
+      },
+      {
+        "name": "Grim Shelter",
+        "mods": [
+          "+203 to Armour",
+          "99% increased Armour",
+          "Recover 4% of maximum Life when you use a Warcry",
+          "Warcry Skills have 39% increased Area of Effect"
+        ],
+        "rarity": "RARE",
+        "base": "Imperial Greathelm",
+        "slot": "Helmet"
+      },
+      {
+        "name": "Atziri's Splendour",
+        "mods": [
+          "+1 to Level of all Corrupted Skill Gems",
+          "This item gains bonuses from Socketed Soul Cores as though it was also a Shield",
+          "337% increased Evasion Rating",
+          "+16% to all Elemental Resistances"
+        ],
+        "rarity": "UNIQUE",
+        "base": "Sacrificial Regalia",
+        "slot": "Body Armour"
+      },
+      {
+        "name": "Cataclysm Palm",
+        "mods": [
+          "+187 to Armour",
+          "100% increased Armour",
+          "Adds 17 to 31 Physical Damage to Attacks",
+          "+41% to Cold Resistance"
+        ],
+        "rarity": "RARE",
+        "base": "Massive Mitts",
+        "slot": "Gloves"
+      },
+      {
+        "name": "Decree of Flight",
+        "mods": [
+          "30% increased Movement Speed",
+          "173% increased Armour and Energy Shield",
+          "30% faster Dodge Roll",
+          "Gain Guard equal to 14% of missing Energy Shield for 4 seconds when you Dodge Roll",
+          "Maximum amount of Guard is based on maximum Energy Shield instead"
+        ],
+        "rarity": "UNIQUE",
+        "base": "Runemastered Ancient Leggings",
+        "slot": "Boots"
+      },
+      {
+        "name": "Carrion Coil",
+        "mods": [
+          "-2 Prefix Modifiers allowed",
+          "+2 Suffix Modifiers allowed",
+          "+16 to all Attributes",
+          "+35 to Strength",
+          "+40 to Dexterity",
+          "+39 to Intelligence"
+        ],
+        "rarity": "RARE",
+        "base": "Tenebrous Ring",
+        "slot": "Ring 1"
+      },
+      {
+        "name": "Glyph Shard",
+        "mods": [
+          "27% increased maximum Energy Shield",
+          "10% increased Warcry Cooldown Recovery Rate",
+          "30% increased Damage with Warcries"
+        ],
+        "slot": "Jewel (tree)"
+      },
+      {
+        "name": "Heroic Tragedy",
+        "mods": [
+          "Timeless Jewel"
+        ],
+        "slot": "Jewel (tree)"
+      },
+      {
+        "name": "Empyrean Stone",
+        "mods": [
+          "8% increased amount of Life Leeched",
+          "15% increased Warcry Cooldown Recovery Rate",
+          "13% increased Damage with Warcries"
+        ],
+        "slot": "Jewel (tree)"
+      },
+      {
+        "name": "Entropy Scar",
+        "mods": [
+          "28% increased maximum Energy Shield",
+          "21% increased Global Physical Damage",
+          "14% increased Warcry Cooldown Recovery Rate"
+        ],
+        "slot": "Jewel (tree)"
+      },
+      {
+        "name": "Pandemonium Solace",
+        "mods": [
+          "15% increased Global Physical Damage",
+          "10% increased amount of Life Leeched",
+          "15% increased Warcry Cooldown Recovery Rate",
+          "10% increased Damage with Warcries"
+        ],
+        "slot": "Jewel (tree)"
+      },
+      {
+        "name": "Kraken Glimmer",
+        "mods": [
+          "25% increased maximum Energy Shield",
+          "16% increased Global Physical Damage",
+          "15% increased Warcry Cooldown Recovery Rate"
+        ],
+        "slot": "Jewel (tree)"
+      },
+      {
+        "name": "Sol Ichor",
+        "mods": [
+          "28% increased maximum Energy Shield",
+          "22% increased Global Physical Damage",
+          "13% increased Warcry Cooldown Recovery Rate"
+        ],
+        "slot": "Jewel (tree)"
+      }
+    ],
+    "skills": [
+      {
+        "index": 1,
+        "active": "Mace Strike",
+        "actives": [
+          "Mace Strike"
+        ],
+        "supports": [
+          "Brutality II",
+          "Armour Break III",
+          "Deep Cuts II",
+          "Bleed III",
+          "Runeforged Blades"
+        ],
+        "is_main": false,
+        "enabled": true
+      },
+      {
+        "index": 2,
+        "active": "Virtuous Barrier",
+        "actives": [
+          "Virtuous Barrier"
+        ],
+        "supports": [
+          "Armour Demolisher II"
+        ],
+        "is_main": false,
+        "enabled": true
+      },
+      {
+        "index": 3,
+        "active": "Raise Shield",
+        "actives": [
+          "Raise Shield"
+        ],
+        "supports": [
+          "Bleed III",
+          "Deep Cuts II",
+          "Knockback",
+          "Mobility",
+          "Steadfast II"
+        ],
+        "is_main": false,
+        "enabled": true
+      },
+      {
+        "index": 4,
+        "active": "Cast on Block",
+        "actives": [
+          "Cast on Block",
+          "Entangle"
+        ],
+        "supports": [
+          "Branching Fissures II",
+          "Bleed III",
+          "Boundless Energy II",
+          "Energy Retention"
+        ],
+        "is_main": false,
+        "enabled": true
+      },
+      {
+        "index": 5,
+        "active": "Arctic Armour",
+        "actives": [
+          "Arctic Armour"
+        ],
+        "supports": [
+          "Freeze",
+          "Cold Penetration",
+          "Knockback",
+          "Frost Nexus",
+          "Cold Mastery"
+        ],
+        "is_main": false,
+        "enabled": true
+      },
+      {
+        "index": 6,
+        "active": "Cast on Dodge",
+        "actives": [
+          "Cast on Dodge",
+          "Enfeeble"
+        ],
+        "supports": [
+          "Heightened Curse",
+          "Focused Curse",
+          "Magnified Area II",
+          "Prolonged Duration II"
+        ],
+        "is_main": false,
+        "enabled": true
+      },
+      {
+        "index": 7,
+        "active": "Fortifying Cry",
+        "actives": [
+          "Fortifying Cry"
+        ],
+        "supports": [
+          "Paquate's Pact",
+          "Brutality III",
+          "Swift Affliction II",
+          "Magnified Area II",
+          "Dialla's Desire"
+        ],
+        "is_main": true,
+        "enabled": true
+      },
+      {
+        "index": 8,
+        "active": "Blasphemy",
+        "actives": [
+          "Blasphemy",
+          "Repulsion"
+        ],
+        "supports": [
+          "Magnified Area II"
+        ],
+        "is_main": false,
+        "enabled": true
+      },
+      {
+        "index": 9,
+        "active": "Magma Barrier",
+        "actives": [
+          "Magma Barrier"
+        ],
+        "supports": [
+          "Stun III",
+          "Enduring Impact II",
+          "Knockback",
+          "Vruun's Inevitability",
+          "Charge Profusion II"
+        ],
+        "is_main": false,
+        "enabled": true
+      },
+      {
+        "index": 10,
+        "active": "Herald of Blood",
+        "actives": [
+          "Herald of Blood"
+        ],
+        "supports": [
+          "Armour Break III",
+          "Uruk's Smelting",
+          "Bleed IV",
+          "Life Leech III",
+          "Magnified Area II"
+        ],
+        "is_main": false,
+        "enabled": true
+      },
+      {
+        "index": 11,
+        "active": "Bloodhound's Mark",
+        "actives": [
+          "Bloodhound's Mark"
+        ],
+        "supports": [
+          "Charged Mark",
+          "Magnified Area II"
+        ],
+        "is_main": false,
+        "enabled": true
+      },
+      {
+        "index": 12,
+        "active": "Shield Charge",
+        "actives": [
+          "Shield Charge"
+        ],
+        "supports": [
+          "Concussive Runes",
+          "Armour Demolisher II",
+          "Knockback",
+          "Bleed III",
+          "Stun III"
+        ],
+        "is_main": false,
+        "enabled": true
+      },
+      {
+        "index": 13,
+        "active": "Shockwave Totem",
+        "actives": [
+          "Shockwave Totem"
+        ],
+        "supports": [
+          "Urgent Totems III",
+          "Astral Projection",
+          "Hardy Totems II",
+          "Bleed IV",
+          "Efficiency II"
+        ],
+        "is_main": false,
+        "enabled": true
+      },
+      {
+        "index": 14,
+        "active": "Virtuous Barrier",
+        "actives": [
+          "Virtuous Barrier"
+        ],
+        "supports": [],
+        "is_main": false,
+        "enabled": true
+      },
+      {
+        "index": 15,
+        "active": "Raise Shield",
+        "actives": [
+          "Raise Shield"
+        ],
+        "supports": [],
+        "is_main": false,
+        "enabled": true
+      },
+      {
+        "index": 16,
+        "active": "Cast on Block",
+        "actives": [
+          "Cast on Block"
+        ],
+        "supports": [],
+        "is_main": false,
+        "enabled": true
+      }
+    ],
+    "notes": "",
+    "main_group": 7,
+    "main_skill": "Fortifying Cry",
+    "class_name": "Mercenary",
+    "ascendancy": "Gemling Legionnaire",
+    "level": "92",
+    "jewels": [
+      {
+        "name": "Glyph Shard",
+        "mods": [
+          "27% increased maximum Energy Shield",
+          "10% increased Warcry Cooldown Recovery Rate",
+          "30% increased Damage with Warcries"
+        ],
+        "slot": "Jewel (tree)"
+      },
+      {
+        "name": "Heroic Tragedy",
+        "mods": [
+          "Timeless Jewel"
+        ],
+        "slot": "Jewel (tree)"
+      },
+      {
+        "name": "Empyrean Stone",
+        "mods": [
+          "8% increased amount of Life Leeched",
+          "15% increased Warcry Cooldown Recovery Rate",
+          "13% increased Damage with Warcries"
+        ],
+        "slot": "Jewel (tree)"
+      },
+      {
+        "name": "Entropy Scar",
+        "mods": [
+          "28% increased maximum Energy Shield",
+          "21% increased Global Physical Damage",
+          "14% increased Warcry Cooldown Recovery Rate"
+        ],
+        "slot": "Jewel (tree)"
+      },
+      {
+        "name": "Pandemonium Solace",
+        "mods": [
+          "15% increased Global Physical Damage",
+          "10% increased amount of Life Leeched",
+          "15% increased Warcry Cooldown Recovery Rate",
+          "10% increased Damage with Warcries"
+        ],
+        "slot": "Jewel (tree)"
+      },
+      {
+        "name": "Kraken Glimmer",
+        "mods": [
+          "25% increased maximum Energy Shield",
+          "16% increased Global Physical Damage",
+          "15% increased Warcry Cooldown Recovery Rate"
+        ],
+        "slot": "Jewel (tree)"
+      },
+      {
+        "name": "Sol Ichor",
+        "mods": [
+          "28% increased maximum Energy Shield",
+          "22% increased Global Physical Damage",
+          "13% increased Warcry Cooldown Recovery Rate"
+        ],
+        "slot": "Jewel (tree)"
+      }
+    ]
+  }
+}

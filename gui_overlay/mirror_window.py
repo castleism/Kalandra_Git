@@ -146,6 +146,9 @@ API_KEY_URLS.setdefault("gemini", "https://aistudio.google.com/app/apikey")
 API_KEY_URLS["elevenlabs"] = "https://elevenlabs.io/app/settings/api-keys"
 API_KEY_URLS["github"] = ("https://github.com/settings/tokens/new"
                           "?scopes=repo&description=Kalandra%20overlay")
+# poe.ninja has no key portal — its JSON is public. The button opens the
+# site so the "key (optional)" row is never a dead end.
+API_KEY_URLS["poeninja"] = "https://poe.ninja/poe2/economy"
 
 # Home/site URLs for every linked service in Settings — powers the
 # "Open site" buttons so each integration is clickable and testable.
@@ -162,6 +165,18 @@ SERVICE_URLS = {
     "maxroll":          "https://maxroll.gg/poe2",
     "mobalytics":       "https://mobalytics.gg/poe-2",
     "poe2wiki":         "https://www.poe2wiki.net/wiki/Path_of_Exile_2_Wiki",
+}
+
+# Direct sign-in pages for services with user accounts (the generic site URL
+# often lands on content, not the login). Used by the Settings rows so
+# "connect my account" is always one click, never a web hunt.
+LINK_SIGNIN_URLS = {
+    "maxroll":       "https://maxroll.gg/login",
+    "mobalytics":    "https://app.mobalytics.gg/",
+    "neversink":     "https://www.filterblade.xyz/Account",
+    "craftofexile2": "https://www.craftofexile.com/?game=poe2",
+    "poe2wiki":      "https://www.poe2wiki.net/index.php?title=Special:UserLogin",
+    "poe2_forums":   "https://www.pathofexile.com/login",
 }
 
 # Major email providers for the Email (account backup) row. Each entry:
@@ -330,14 +345,34 @@ def load_config():
             with open(CONFIG_PATH, "r", encoding="utf-8") as f:
                 cfg.update(json.load(f))
     except Exception:
-        pass
+        # A corrupt config must never be silently eaten: preserve the
+        # evidence so settings can be salvaged, then run on defaults.
+        try:
+            import shutil
+            shutil.copy2(CONFIG_PATH, CONFIG_PATH + ".corrupt.bak")
+        except Exception:
+            pass
     return cfg
 
 def save_config(cfg):
+    """ATOMIC config save: write a fresh temp file, then os.replace() it
+    over the old one. In-place rewrites corrupted config.json when the file
+    grew (2026-07-04: truncated mid-string, silently reverting every
+    setting to defaults) — a rename of a complete new file cannot."""
     try:
         os.makedirs(os.path.dirname(CONFIG_PATH), exist_ok=True)
-        with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+        tmp = CONFIG_PATH + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
             json.dump(cfg, f, indent=2)
+            f.flush()
+            try:
+                os.fsync(f.fileno())
+            except Exception:
+                pass
+        # Verify the temp parses before it replaces the real file.
+        with open(tmp, "r", encoding="utf-8") as f:
+            json.load(f)
+        os.replace(tmp, CONFIG_PATH)
     except Exception:
         pass
 
@@ -868,6 +903,11 @@ if PYQT_AVAILABLE:
 
             # --- Dashboard tabs: pick which to show ---
             self._build_dashboard_tabs_section(grid)
+            # --- Custom tabs: user-added website/program tabs ---
+            try:
+                self._build_custom_tabs_section(grid)
+            except Exception:
+                pass
 
             self.fields = {}
             if self.am:
@@ -1049,6 +1089,118 @@ if PYQT_AVAILABLE:
                 prefs[label] = cb.isChecked()
             self.config["dashboard_tabs"] = prefs
             save_config(self.config)
+
+        def _build_custom_tabs_section(self, grid):
+            """Add your OWN dashboard tabs: a website in a contained browser
+            (like poe.ninja / Craft of Exile) or a program folder + exe
+            adopted into the tab (containerized like PoB)."""
+            hdr = QLabel("<b>Custom tabs</b> — add your own website or "
+                         "program tabs to the dashboard")
+            hdr.setStyleSheet("color:#d4a373;font-size:12px;margin-top:8px;")
+            grid.addWidget(hdr)
+            box = QFrame()
+            box.setStyleSheet("QFrame{border:1px solid #262c36;border-radius:6px;}")
+            v = QVBoxLayout(box)
+            self._custom_list_lay = QVBoxLayout()
+            v.addLayout(self._custom_list_lay)
+            self._refresh_custom_list()
+            # -- add a website tab --
+            wrow = QHBoxLayout()
+            self.ct_name = QLineEdit(); self.ct_name.setPlaceholderText("Tab name")
+            self.ct_name.setMaximumWidth(140)
+            wrow.addWidget(self.ct_name)
+            self.ct_url = QLineEdit()
+            self.ct_url.setPlaceholderText("https://… (contained browser)")
+            wrow.addWidget(self.ct_url, 1)
+            addw = QPushButton("Add website tab")
+            addw.setProperty("gem", "emerald")
+            addw.clicked.connect(self._add_custom_web)
+            wrow.addWidget(addw)
+            v.addLayout(wrow)
+            # -- add a program tab --
+            arow = QHBoxLayout()
+            self.ct_exe_lbl = QLabel("No program picked.")
+            self.ct_exe_lbl.setStyleSheet("color:#7d8694;font-size:10px;")
+            pick = QPushButton("Pick program .exe…")
+            pick.clicked.connect(self._pick_custom_exe)
+            arow.addWidget(pick)
+            arow.addWidget(self.ct_exe_lbl, 1)
+            adda = QPushButton("Add program tab")
+            adda.setProperty("gem", "emerald")
+            adda.clicked.connect(self._add_custom_app)
+            arow.addWidget(adda)
+            v.addLayout(arow)
+            note = QLabel("Program tabs launch the exe and adopt its window "
+                          "into the dashboard (same containment as PoB). "
+                          "Changes apply when the dashboard reopens.")
+            note.setWordWrap(True)
+            note.setStyleSheet("color:#7d8694;font-size:10px;")
+            v.addWidget(note)
+            grid.addWidget(box)
+            self._picked_exe = ""
+
+        def _refresh_custom_list(self):
+            while self._custom_list_lay.count():
+                it = self._custom_list_lay.takeAt(0)
+                w = it.widget()
+                if w:
+                    w.setParent(None); w.deleteLater()
+            tabs = self.config.get("custom_tabs") or []
+            for i, ct in enumerate(tabs):
+                roww = QWidget(); row = QHBoxLayout(roww)
+                row.setContentsMargins(0, 0, 0, 0)
+                kind = "🌐" if ct.get("kind") == "web" else "🖥"
+                tgt = ct.get("url") or ct.get("exe") or ""
+                lab = QLabel(f"{kind} <b>{ct.get('name', '?')}</b> "
+                             f"<span style='color:#7d8694;'>{tgt[:60]}</span>")
+                row.addWidget(lab, 1)
+                rm = QPushButton("Remove")
+                rm.setProperty("gem", "ruby")
+                rm.clicked.connect(lambda _, idx=i: self._remove_custom(idx))
+                row.addWidget(rm)
+                self._custom_list_lay.addWidget(roww)
+
+        def _pick_custom_exe(self):
+            exe, _ = QFileDialog.getOpenFileName(
+                self, "Pick the program to contain", "", "Programs (*.exe)")
+            if exe:
+                self._picked_exe = exe
+                self.ct_exe_lbl.setText(exe)
+
+        def _add_custom_web(self):
+            name = self.ct_name.text().strip()
+            url = self.ct_url.text().strip()
+            if not name or not url.lower().startswith(("http://", "https://")):
+                self.ct_url.setPlaceholderText("Need a name + a full https:// URL")
+                return
+            tabs = list(self.config.get("custom_tabs") or [])
+            tabs.append({"name": name, "kind": "web", "url": url})
+            self.config["custom_tabs"] = tabs
+            save_config(self.config)
+            self.ct_name.clear(); self.ct_url.clear()
+            self._refresh_custom_list()
+
+        def _add_custom_app(self):
+            name = self.ct_name.text().strip()
+            if not name or not getattr(self, "_picked_exe", ""):
+                self.ct_exe_lbl.setText("Pick an .exe and give the tab a name "
+                                        "first.")
+                return
+            tabs = list(self.config.get("custom_tabs") or [])
+            tabs.append({"name": name, "kind": "app", "exe": self._picked_exe})
+            self.config["custom_tabs"] = tabs
+            save_config(self.config)
+            self.ct_name.clear(); self._picked_exe = ""
+            self.ct_exe_lbl.setText("No program picked.")
+            self._refresh_custom_list()
+
+        def _remove_custom(self, idx):
+            tabs = list(self.config.get("custom_tabs") or [])
+            if 0 <= idx < len(tabs):
+                tabs.pop(idx)
+                self.config["custom_tabs"] = tabs
+                save_config(self.config)
+                self._refresh_custom_list()
             if self.on_dashboard_change:
                 try:
                     self.on_dashboard_change()
@@ -1148,12 +1300,26 @@ if PYQT_AVAILABLE:
                 row.addWidget(save)
                 row.addWidget(clear)
                 lay.addLayout(row)
-                # "Get a key" helper for AI providers.
+                helper = QHBoxLayout()
+                # "Get a key" helper for services with a key page.
                 if svc["id"] in API_KEY_URLS:
-                    getkey = QPushButton("Get a key (opens browser)")
+                    getkey = QPushButton("Get a key ↗")
                     getkey.clicked.connect(
                         lambda _, s=svc["id"]: QDesktopServices.openUrl(QUrl(API_KEY_URLS[s])))
-                    lay.addWidget(getkey)
+                    helper.addWidget(getkey)
+                # EVERY keyed/login service gets its sign-in/site button too —
+                # "where do I even do this?" should never need a web search.
+                surl = LINK_SIGNIN_URLS.get(svc["id"]) or \
+                    SERVICE_URLS.get(svc["id"], "")
+                if surl:
+                    opensite = QPushButton("Open sign-in / site ↗")
+                    opensite.setToolTip(surl)
+                    opensite.clicked.connect(
+                        lambda _, u=surl: QDesktopServices.openUrl(QUrl(u)))
+                    helper.addWidget(opensite)
+                if helper.count():
+                    helper.addStretch()
+                    lay.addLayout(helper)
             elif svc["kind"] == "oauth":
                 if svc["id"] == "pathofexile":
                     self._build_ggg_oauth_row(lay)
@@ -1194,14 +1360,38 @@ if PYQT_AVAILABLE:
                 row = QHBoxLayout()
                 url = SERVICE_URLS.get(svc["id"], "")
                 if url:
-                    open_btn = QPushButton("Open site")
+                    open_btn = QPushButton("Open site ↗")
                     open_btn.setToolTip(url)
                     open_btn.clicked.connect(
                         lambda _, u=url: QDesktopServices.openUrl(QUrl(u)))
                     row.addWidget(open_btn)
-                lbl = QLabel("Data-source / tool integration (no login required).")
-                lbl.setStyleSheet("color:#7d8694;font-size:11px;")
-                row.addWidget(lbl, 1)
+                # Sites with accounts (Maxroll, Mobalytics, FilterBlade, the
+                # wiki) also get a direct sign-in button + a remembered
+                # username so Kalandra can reference YOUR profiles/guides.
+                if svc["id"] in LINK_SIGNIN_URLS:
+                    li = QPushButton("Open sign-in ↗")
+                    li.setToolTip(LINK_SIGNIN_URLS[svc["id"]])
+                    li.clicked.connect(
+                        lambda _, u=LINK_SIGNIN_URLS[svc["id"]]:
+                        QDesktopServices.openUrl(QUrl(u)))
+                    row.addWidget(li)
+                    user_edit = QLineEdit(self.config.get(
+                        f"{svc['id']}_username", ""))
+                    user_edit.setPlaceholderText("your username there (optional)")
+
+                    def _mk_saver(sid, w):
+                        def _save():
+                            self.config[f"{sid}_username"] = w.text().strip()
+                            save_config(self.config)
+                        return _save
+                    user_edit.editingFinished.connect(
+                        _mk_saver(svc["id"], user_edit))
+                    row.addWidget(user_edit, 1)
+                else:
+                    lbl = QLabel("Data-source / tool integration (no login "
+                                 "required).")
+                    lbl.setStyleSheet("color:#7d8694;font-size:11px;")
+                    row.addWidget(lbl, 1)
                 lay.addLayout(row)
             return box
 
@@ -1243,14 +1433,16 @@ if PYQT_AVAILABLE:
             self._save_ggg_cid()
             cid = self.config.get("ggg_client_id", "")
             if not cid:
+                # No misleading browser jump (the docs page there is the old
+                # PoE1-era OAuth reference) — explain the real state instead.
                 self.ggg_status.setText(
-                    "⚠ No client_id yet. GGG hands these out per-app: send them "
-                    "GGG_OAuth_Application_Letter.md (repo root) at "
-                    "support@grindinggear.com, then paste the client_id above and "
-                    "click Connect again. Opening their OAuth docs so you can "
-                    "see what the flow will do...")
-                QDesktopServices.openUrl(
-                    QUrl("https://www.pathofexile.com/developer/docs/authorization"))
+                    "⚠ Not connectable yet — GGG hasn't opened public PoE2 "
+                    "OAuth. They issue client_ids per app: email "
+                    "docs/GGG_OAuth_Application_Letter.md to "
+                    "oauth@grindinggear.com, paste the client_id above when it "
+                    "arrives, then click Connect. Until then, character import "
+                    "works WITHOUT login via the Character Selector "
+                    "(ladder/profile fetch) and PoB's own import.")
                 return
             try:
                 from core_engine.oauth_pkce import run_pkce_flow
@@ -1303,23 +1495,62 @@ if PYQT_AVAILABLE:
 
         # -- Email provider picker ----------------------------------------------
         def _build_email_row(self, lay):
+            # ---- Modern path first: Gmail OAuth 2.0 + PKCE + XOAUTH2 ------
+            # No app passwords: sign-in happens AT Google with your MFA;
+            # Kalandra stores only revocable tokens, only in the OS keychain.
+            hdr = QLabel("<b>Gmail (OAuth 2.0 — recommended)</b>")
+            hdr.setStyleSheet("color:#8fd6a0;font-size:12px;")
+            lay.addWidget(hdr)
+            g_row = QHBoxLayout()
+            self.gm_addr_edit = QLineEdit(self.config.get("email_address", ""))
+            self.gm_addr_edit.setPlaceholderText("you@gmail.com")
+            g_row.addWidget(self.gm_addr_edit, 1)
+            self.gm_connect_btn = QPushButton("Connect Gmail (OAuth)")
+            self.gm_connect_btn.setProperty("gem", "emerald")
+            self.gm_connect_btn.setToolTip(
+                "OAuth 2.0 installed-app flow with PKCE: your browser signs "
+                "in at Google (MFA and all); Kalandra receives a revocable, "
+                "mail-only token — never your password.")
+            self.gm_connect_btn.clicked.connect(self._start_gmail_oauth)
+            g_row.addWidget(self.gm_connect_btn)
+            lay.addLayout(g_row)
+            cid_row = QHBoxLayout()
+            self.gm_cid_edit = QLineEdit(self.config.get("google_client_id", ""))
+            self.gm_cid_edit.setPlaceholderText("Google OAuth client_id (Desktop app)")
+            cid_row.addWidget(self.gm_cid_edit, 1)
+            self.gm_csec_edit = QLineEdit(self.config.get("google_client_secret", ""))
+            self.gm_csec_edit.setEchoMode(QLineEdit.EchoMode.Password)
+            self.gm_csec_edit.setPlaceholderText("client_secret")
+            cid_row.addWidget(self.gm_csec_edit, 1)
+            mk_btn = QPushButton("Create one ↗")
+            mk_btn.setToolTip("console.cloud.google.com → Credentials → "
+                              "OAuth client ID → Desktop app (free, one-time).")
+            mk_btn.clicked.connect(lambda: QDesktopServices.openUrl(
+                QUrl("https://console.cloud.google.com/apis/credentials")))
+            cid_row.addWidget(mk_btn)
+            lay.addLayout(cid_row)
+            self.gm_status = QLabel("")
+            self.gm_status.setWordWrap(True)
+            self.gm_status.setStyleSheet("color:#9aa4b2;font-size:11px;")
+            lay.addWidget(self.gm_status)
+
+            # ---- Legacy fallback (other providers / no OAuth client) ------
             row = QHBoxLayout()
-            row.addWidget(QLabel("Provider:"))
+            row.addWidget(QLabel("Other provider (legacy app password):"))
             self.email_combo = QComboBox()
             for label, signin, apppass in EMAIL_PROVIDERS:
                 self.email_combo.addItem(label, (signin, apppass))
             saved = self.config.get("email_provider", "Gmail")
             i = self.email_combo.findText(saved)
-            if i >= 0:
-                self.email_combo.setCurrentIndex(i)
+            self.email_combo.setCurrentIndex(i if i >= 0 else 0)  # Gmail default
             self.email_combo.currentTextChanged.connect(self._on_email_provider)
             row.addWidget(self.email_combo, 1)
             signin_btn = QPushButton("Open sign-in")
             signin_btn.clicked.connect(lambda: self._open_email_url(0))
             row.addWidget(signin_btn)
             app_btn = QPushButton("Get app password")
-            app_btn.setToolTip("Most providers need an app-specific password for "
-                               "third-party tools; this opens that page.")
+            app_btn.setToolTip("Legacy: a static secret that bypasses MFA. "
+                               "Use the OAuth connect above when you can.")
             app_btn.clicked.connect(lambda: self._open_email_url(1))
             row.addWidget(app_btn)
             lay.addLayout(row)
@@ -1333,6 +1564,50 @@ if PYQT_AVAILABLE:
             save.clicked.connect(self._save_email_token)
             tok_row.addWidget(save)
             lay.addLayout(tok_row)
+
+        def _start_gmail_oauth(self):
+            addr = self.gm_addr_edit.text().strip()
+            cid = self.gm_cid_edit.text().strip()
+            csec = self.gm_csec_edit.text().strip()
+            self.config["email_address"] = addr
+            self.config["google_client_id"] = cid
+            # NOTE: desktop-app client_secret is not confidential (RFC 8252);
+            # PKCE carries the security. Stored in config for convenience.
+            self.config["google_client_secret"] = csec
+            save_config(self.config)
+            if not addr or not cid:
+                self.gm_status.setText(
+                    "⚠ Enter your Gmail address and a Google OAuth client_id "
+                    "('Create one ↗' walks you there — Desktop app type).")
+                return
+            try:
+                from core_engine.email_oauth import run_gmail_oauth, store_bundle
+            except Exception as e:
+                self.gm_status.setText(f"OAuth module failed to load: {e}")
+                return
+            self.gm_connect_btn.setEnabled(False)
+            self.gm_status.setText("Waiting for the Google sign-in in your "
+                                   "browser (3-minute window)…")
+
+            def _work():
+                res = run_gmail_oauth(
+                    cid, csec,
+                    lambda u: QDesktopServices.openUrl(QUrl(u)))
+
+                def _done():
+                    self.gm_connect_btn.setEnabled(True)
+                    if res.get("ok"):
+                        ok = store_bundle(self.am, addr, res["token"])
+                        self.gm_status.setText(
+                            "🟢 Gmail connected via OAuth — token in your OS "
+                            "keychain, revocable at myaccount.google.com/"
+                            "permissions." if ok else
+                            "⚠ Connected, but keychain storage failed "
+                            "(pip install keyring).")
+                    else:
+                        self.gm_status.setText(f"⚠ OAuth failed: {res.get('error')}")
+                QTimer.singleShot(0, _done)
+            threading.Thread(target=_work, daemon=True).start()
 
         def _on_email_provider(self, label):
             self.config["email_provider"] = label
@@ -1630,7 +1905,35 @@ if PYQT_AVAILABLE:
             root.addLayout(row3)
 
             self.list = QListWidget()
+            self.list.currentItemChanged.connect(self._sync_orb_combo)
             root.addWidget(self.list, 1)
+
+            # Per-character companion orb: SEE and SET which orb speaks for
+            # each character. Saved in config['character_orbs'] by build
+            # name; setting a character active applies its orb to the mirror.
+            orow = QHBoxLayout()
+            orow.addWidget(QLabel("Companion orb for selected:"))
+            # ORDER MATTERS: the label must exist and the combo must be fully
+            # populated BEFORE the signal is connected — addItem fires
+            # currentIndexChanged, and a handler touching a not-yet-created
+            # label crashed the whole dialog mid-__init__ (2026-07-04: the
+            # selector "wouldn't open").
+            self.orb_lbl = QLabel("")
+            self.orb_lbl.setStyleSheet("color:#7d8694;font-size:10px;")
+            self.orb_combo = QComboBox()
+            try:
+                from gui_overlay.mirror_window import KalandraOverlayApp as _K
+                orbs = _K.COMPANION_ORBS
+            except Exception:
+                orbs = [("Divine Orb", "divine")]
+            self.orb_combo.blockSignals(True)
+            for label, slug in orbs:
+                self.orb_combo.addItem(label, slug)
+            self.orb_combo.blockSignals(False)
+            self.orb_combo.currentIndexChanged.connect(self._assign_orb)
+            orow.addWidget(self.orb_combo, 1)
+            orow.addWidget(self.orb_lbl)
+            root.addLayout(orow)
 
             btns = QHBoxLayout()
             self.select_btn = QPushButton("Set active character")
@@ -1836,7 +2139,13 @@ if PYQT_AVAILABLE:
             self.status.setText("Build loaded: " + label)
 
         def _open_in_pob(self):
-            """Copy the code and launch the PoB app (separate from loading)."""
+            """Copy the code and launch the PoB app (separate from loading).
+
+            NO modal dialog here: PoB steals the foreground the moment it
+            launches, so an application-modal box pops up BEHIND it — the
+            user can't see it, and every Kalandra window (including the
+            always-on-top overlay) freezes until the invisible box is
+            dismissed. The status line carries the message instead."""
             code = self._resolve_code()
             if not code:
                 return
@@ -1845,9 +2154,9 @@ if PYQT_AVAILABLE:
             except Exception:
                 pass
             ok, lmsg = self.pob.launch_path_of_building(self.config.get("pob_exe"))
-            self.status.setText(lmsg)
-            QMessageBox.information(self, "Open in Path of Building",
-                                   ("The build code is on your clipboard.\n\n" + lmsg))
+            self.status.setText(("✓ " if ok else "⚠ ") + lmsg +
+                                "  (build code is on your clipboard — paste "
+                                "it into PoB's Import/Export)")
 
         def _load_pob_builds(self):
             if not self.pob:
@@ -1862,9 +2171,20 @@ if PYQT_AVAILABLE:
         def _builds_worker(self):
             """Scan for saved PoB builds OFF the UI thread (the scan walks the
             filesystem and parses XML, so it must never run on the UI thread)."""
-            result = {"builds": [], "searched": [], "error": None}
+            result = {"builds": [], "searched": [], "error": None,
+                      "primary": None}
             try:
+                try:
+                    result["primary"] = self.pob.pob_settings_build_path(
+                        self.config.get("pob_install_dir"))
+                except Exception:
+                    pass
+                # Same truth as the dashboard's PoB (live) tab: prefer the
+                # configured install dir, else derive it from the picked exe
+                # (the tab's primary key), so both always scan ONE install.
                 pob_install = self.config.get("pob_install_dir")
+                if not pob_install and self.config.get("pob_exe"):
+                    pob_install = os.path.dirname(self.config["pob_exe"])
                 result["builds"] = self.pob.find_pob_builds(
                     self.config.get("pob_builds_dir"), pob_install_dir=pob_install)
                 if not result["builds"]:
@@ -1904,7 +2224,47 @@ if PYQT_AVAILABLE:
                 # so 'Set active character' can actually LOAD it into Kalandra.
                 it.setData(Qt.ItemDataRole.UserRole, b)
                 self.list.addItem(it)
-            self.status.setText(f"Found {len(builds)} saved PoB builds. Select one and 'Set active'.")
+            where = result.get("primary")
+            self.status.setText(
+                f"Found {len(builds)} saved PoB builds"
+                + (f" (PoB's configured folder: {where})" if where else
+                   " (PoB's Settings.xml not found — scanned the usual "
+                   "folders)")
+                + ". Select one and 'Set active'.")
+
+        def _sel_char_name(self):
+            it = self.list.currentItem()
+            if not it:
+                return None
+            b = it.data(Qt.ItemDataRole.UserRole) or {}
+            return b.get("name") or (it.text().split(" — ")[0] if it.text() else None)
+
+        def _sync_orb_combo(self, *_a):
+            """Show the selected character's assigned orb (or the global one)."""
+            name = self._sel_char_name()
+            if not name:
+                return
+            assigned = (self.config.get("character_orbs") or {}).get(name)
+            slug = assigned or self.config.get("companion_orb", "divine")
+            i = self.orb_combo.findData(slug)
+            if i >= 0:
+                self.orb_combo.blockSignals(True)
+                self.orb_combo.setCurrentIndex(i)
+                self.orb_combo.blockSignals(False)
+            self.orb_lbl.setText("assigned" if assigned else "default")
+
+        def _assign_orb(self, _i):
+            if not hasattr(self, "orb_lbl") or not hasattr(self, "list"):
+                return          # fired during construction — ignore
+            name = self._sel_char_name()
+            if not name:
+                self.orb_lbl.setText("select a character first")
+                return
+            m = dict(self.config.get("character_orbs") or {})
+            m[name] = self.orb_combo.currentData()
+            self.config["character_orbs"] = m
+            save_config(self.config)
+            self.orb_lbl.setText("assigned ✓")
 
         def _pob_hint(self):
             account = self.account_edit.text().strip() or self.config.get("account_name", "")
@@ -2149,6 +2509,20 @@ class KalandraOverlayApp(ParentClass):
         self.animation_timer.timeout.connect(self.update_physics_loop)
         self.animation_timer.start(33)
 
+        # Ghost mode: when the game window has focus the mirror fades to a
+        # whisper (only the orb stays clearly visible) and stops eating
+        # clicks entirely — hold Ctrl to make it solid + clickable again.
+        # Config: game_fade / game_click_through (both default on),
+        # game_fade_frame (frame opacity while ghosted).
+        self.game_mode = False            # game is foreground right now
+        self._ctrl_override = False       # Ctrl held: temporarily solid
+        self._click_through_on = False    # current WS_EX_TRANSPARENT state
+        # 150ms: fast enough that holding Ctrl feels instant (the calls are
+        # a few user32 reads — microseconds).
+        self.game_watch_timer = QTimer(self)
+        self.game_watch_timer.timeout.connect(self._poll_game_state)
+        self.game_watch_timer.start(150)
+
         logger.log_event("SYSTEM", "PyQt6 Transparent QWidget window initialized.")
 
     # ------------------------------------------------
@@ -2162,7 +2536,10 @@ class KalandraOverlayApp(ParentClass):
                 logger.log_event("DATABASE", f"DB init failed: {e}")
         if ScreenRecorder:
             try:
-                self.recorder = ScreenRecorder(output_dir=self.config.get("dir_clips", "data_engine/clips"))
+                self.recorder = ScreenRecorder(
+                    output_dir=self.config.get("dir_clips", "data_engine/clips"),
+                    fps=self.config.get("clip_fps", 15),
+                    max_width=self.config.get("clip_max_width", 1920))
             except Exception as e:
                 logger.log_event("OCR", f"Recorder init failed: {e}")
         if AccountManager:
@@ -2320,6 +2697,57 @@ class KalandraOverlayApp(ParentClass):
         self.update()
 
     # ------------------------------------------------
+    # GHOST MODE (game foreground -> fade + click-through; Ctrl -> solid)
+    # ------------------------------------------------
+    def _poll_game_state(self):
+        """150ms poll: is the game foreground, is Ctrl held? Applies the
+        click-through window style only on CHANGE (SetWindowLongPtr is not
+        free) and repaints only on visible-state changes."""
+        try:
+            from gui_overlay import game_watch
+            game = bool(self.config.get("game_fade", True)) and \
+                game_watch.game_foreground()
+            ctrl = game_watch.ctrl_down() if game else False
+        except Exception:
+            game, ctrl = False, False
+        want_ct = (game and not ctrl and
+                   bool(self.config.get("game_click_through", True)))
+        if want_ct != self._click_through_on:
+            try:
+                from gui_overlay import game_watch
+                if game_watch.set_click_through(int(self.winId()), want_ct):
+                    self._click_through_on = want_ct
+            except Exception:
+                pass
+        if (game, ctrl) != (self.game_mode, self._ctrl_override):
+            entering = game and not self.game_mode
+            leaving = self.game_mode and not game
+            self.game_mode, self._ctrl_override = game, ctrl
+            if entering:
+                self.signals.log.emit(
+                    "GUI", "Game detected — overlay ghosted (orb stays "
+                           "visible; clicks pass through; hold Ctrl to "
+                           "interact).")
+            elif leaving:
+                self.signals.log.emit("GUI", "Game left focus — overlay solid "
+                                             "and clickable again.")
+            self.update()
+
+    def _ghost_opacities(self):
+        """(frame_opacity, orb_opacity) for the current state. Ghosted: the
+        frame is a whisper, the orb stays clearly visible. Ctrl override or
+        no game: both follow the normal multiplier."""
+        if self.game_mode and not self._ctrl_override:
+            try:   # junk config must never kill paintEvent
+                fade = float(self.config.get("game_fade_frame", 0.15))
+            except Exception:
+                fade = 0.15
+            fade = min(max(fade, 0.0), 1.0)
+            return (self.opacity_multiplier * fade,
+                    self.opacity_multiplier * 0.92)
+        return self.opacity_multiplier, self.opacity_multiplier
+
+    # ------------------------------------------------
     # PAINT
     # ------------------------------------------------
     def paintEvent(self, event):
@@ -2327,7 +2755,8 @@ class KalandraOverlayApp(ParentClass):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
         rect = self.mirror_rect()
-        painter.setOpacity(self.opacity_multiplier)
+        frame_op, orb_op = self._ghost_opacities()
+        painter.setOpacity(frame_op)
 
         if self.mirror_pixmap and not self.mirror_pixmap.isNull():
             r = rect.toRect()
@@ -2337,6 +2766,7 @@ class KalandraOverlayApp(ParentClass):
             self._draw_vector_fallback(painter, rect)
 
         core_rect = self.orb_geometry()
+        painter.setOpacity(orb_op)   # the orb stays visible even when ghosted
         aura = QRadialGradient(core_rect.center(), core_rect.width() * 0.8)
         aura.setColorAt(0.0, QColor(0, 255, 255, 120))
         aura.setColorAt(1.0, QColor(0, 255, 255, 0))
@@ -2374,6 +2804,7 @@ class KalandraOverlayApp(ParentClass):
                 painter.setBrush(QBrush(QColor(10, 5, 5, 230)))
                 painter.drawEllipse(QRectF(mx, my, mw, mh))
 
+        painter.setOpacity(frame_op)   # medallions/badges fade with the frame
         for btn in self.buttons:
             is_active = (
                 (btn["id"] == "TopLeft" and self.voice_active) or
@@ -2711,6 +3142,16 @@ class KalandraOverlayApp(ParentClass):
             win.activateWindow()
 
     def _menu_done(self, win):
+        # Spurious Hide events fire when a tab spins up an embedded web view
+        # (QtWebEngine briefly recreates native window handles) — if the menu
+        # is actually still on screen, it is NOT done and the overlay must
+        # not barge back in on top of it.
+        try:
+            if win is getattr(self, "_open_menu", None) and win.isVisible() \
+                    and not win.isMinimized():
+                return
+        except Exception:
+            pass
         if getattr(self, "_open_menu", None) is win:
             self._open_menu = None
         if getattr(self, "_open_menu", None) is None and not self.isVisible():
@@ -2723,7 +3164,7 @@ class KalandraOverlayApp(ParentClass):
                     QEvent.Type.Close, QEvent.Type.Hide):
                 # Defer: on Close the window is mid-teardown; on Hide another
                 # menu may be about to claim the slot.
-                QTimer.singleShot(0, lambda o=obj: self._menu_done(o))
+                QTimer.singleShot(150, lambda o=obj: self._menu_done(o))
         except Exception:
             pass
         return super().eventFilter(obj, ev)
@@ -2869,10 +3310,22 @@ class KalandraOverlayApp(ParentClass):
         self.update()
         v = result.get("video")
         t = result.get("transcript")
+        stats = result.get("stats") or {}
+        perf = ""
+        if stats.get("grabbed"):
+            perf = (f"<br>Capture: <b>{stats.get('capture_fps', '?')}</b> fps real "
+                    f"(target {stats.get('target_fps', '?')}), "
+                    f"{stats.get('size', '?')}, {stats.get('seconds', '?')}s")
+            self.signals.log.emit(
+                "RECORD", f"Clip stats: {stats.get('capture_fps')} fps captured "
+                          f"/ {stats.get('target_fps')} target, "
+                          f"{stats.get('duplicated', 0)} duplicated frames, "
+                          f"{stats.get('size')}.")
         self._info("Recording Saved",
                    "<b>Screen recording saved.</b><br><br>"
                    f"Video: <i>{v or 'failed'}</i><br>"
-                   f"Transcription: {'saved' if t else 'no audio captured'}")
+                   f"Transcription: {'saved' if t else 'no audio captured'}"
+                   f"{perf}")
 
     # ------------------------------------------------
     # BUTTON CALLBACKS
@@ -3067,6 +3520,15 @@ class KalandraOverlayApp(ParentClass):
                     context.insert(0, block)
             except Exception:
                 pass
+        # Player profile from the owl's interview: calibrates tone and depth
+        # (veteran vs new, solo-ground levels vs carried, budget, build taste).
+        try:
+            from core_engine.player_profile import PlayerProfile
+            pblock = PlayerProfile.load().prompt_block()
+            if pblock:
+                context.insert(0, pblock)
+        except Exception:
+            pass
         # The user's Unique/BIS reserve stash, so the Orb can suggest using items
         # they're already holding for upgrades.
         if self.reserve:
@@ -3991,6 +4453,41 @@ class KalandraOverlayApp(ParentClass):
             # Badge the character selector: double-click it to view in the PoB tab.
             self.char_notify = True
             self.update()
+            # Remember WHICH file is active (and when it was saved) so the
+            # owl can prompt a re-import when the build goes stale — your
+            # real character outgrows the saved copy fast while leveling.
+            try:
+                self.config["active_build_path"] = os.path.abspath(path)
+                save_config(self.config)
+            except Exception:
+                pass
+            # W4-07: every loaded character gets a folio (folder of working
+            # memory: scan, generated review, roadmap, watchlist) that the
+            # Companion's per-character features build on.
+            try:
+                from core_engine.character_folio import CharacterFolio
+                fname = os.path.splitext(os.path.basename(path))[0]
+                folio = CharacterFolio(fname)
+                folio.write_scan(full)
+                self.signals.log.emit(
+                    "POB", f"Character folio updated: data_engine/characters/"
+                           f"{folio.slug}/")
+            except Exception:
+                pass
+            # Per-character orb identity: if this character has an assigned
+            # orb (Character Selector -> 'Companion orb for selected'), the
+            # mirror switches to it on load.
+            try:
+                stem = os.path.splitext(os.path.basename(path))[0]
+                orbs_map = self.config.get("character_orbs") or {}
+                slug = orbs_map.get(stem) or orbs_map.get(
+                    full.get("name") if isinstance(full, dict) else "")
+                if slug:
+                    self._apply_companion_orb(slug)
+                    self.signals.log.emit(
+                        "GUI", f"Companion orb for {stem}: {slug}.")
+            except Exception:
+                pass
             # Also feed the headless sim if it's set up (optional, non-blocking).
             if self.pob_sim and getattr(self.pob_sim, "available", False):
                 def _sim():
@@ -4153,6 +4650,13 @@ class KalandraOverlayApp(ParentClass):
         # kill us), so the overlay must quit the app explicitly on exit.
         try:
             if getattr(self, "_dashboard", None) is not None:
+                # Graceful goodbye to containerized programs: PoB/Overlay we
+                # LAUNCHED get WM_CLOSE (terminate only as fallback); adopted
+                # EXTERNAL instances are released back to the desktop intact.
+                try:
+                    self._dashboard.shutdown_embedded()
+                except Exception:
+                    pass
                 self._dashboard.deleteLater()
         except Exception:
             pass

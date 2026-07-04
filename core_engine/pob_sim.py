@@ -145,7 +145,7 @@ class PoBSimulator:
     def availability_message(self):
         if self.available:
             return "PoB simulator ready."
-        bits = ["PoB sandbox simulator isn't ready. Run:  python setup_pob_sim.py", ""]
+        bits = ["PoB sandbox simulator isn't ready. Run:  python scripts/setup_pob_sim.py", ""]
         if not self.luajit:
             bits.append("  - LuaJIT interpreter not found. Note: \"LuaJIT-For-Windows.exe\"")
             bits.append("    is the INSTALLER, not LuaJIT itself — point \"luajit_path\" at")

@@ -52,6 +52,36 @@ TITLE_H = 40         # title-bar height (inside the frame)
 RESIZE_BORDER = 6    # resize grab zone thickness
 FRAME_PAD = 8        # gap between the gold band and the content
 
+ICON_PATH = os.path.join("gui_overlay", "assets", "kalandra.ico")
+
+
+def apply_window_identity(widget):
+    """Make a frameless chrome window behave like a REAL app window:
+
+    * Top-level (parentless) windows get Qt.Window + minimize/maximize/
+      system-menu hints, which on Windows means a TASKBAR BUTTON and a
+      proper minimize animation. Without these, a frameless window
+      minimizes to a floating strip at the bottom-left of the desktop.
+    * Every window gets the Kalandra icon (same .ico the desktop shortcut
+      uses), so the taskbar/alt-tab shows the mirror, not the python default.
+
+    Owned windows (given a parent) are left as-is: Windows intentionally
+    keeps owned dialogs out of the taskbar."""
+    flags = widget.windowFlags() | Qt.WindowType.FramelessWindowHint
+    if widget.parent() is None:
+        flags |= (Qt.WindowType.Window
+                  | Qt.WindowType.WindowMinimizeButtonHint
+                  | Qt.WindowType.WindowMaximizeButtonHint
+                  | Qt.WindowType.WindowSystemMenuHint)
+    widget.setWindowFlags(flags)
+    try:
+        if os.path.exists(ICON_PATH):
+            from PyQt6.QtGui import QIcon
+            widget.setWindowIcon(QIcon(ICON_PATH))
+    except Exception:
+        pass
+
+
 _EDGE_TO_QT = {
     "left":        Qt.Edge.LeftEdge,
     "right":       Qt.Edge.RightEdge,
@@ -117,8 +147,7 @@ class _KalandraChrome:
     # -- construction -------------------------------------------------------
     def _chrome_init(self, title, closable=True, minimizable=True,
                      maximizable=True):
-        self.setWindowFlags(self.windowFlags()
-                            | Qt.WindowType.FramelessWindowHint)
+        apply_window_identity(self)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setMouseTracking(True)
         self.setWindowTitle(title)     # taskbar / alt-tab still show it
@@ -316,8 +345,7 @@ class _MirrorChrome:
         return cls._art
 
     def _mirror_init(self, title):
-        self.setWindowFlags(self.windowFlags()
-                            | Qt.WindowType.FramelessWindowHint)
+        apply_window_identity(self)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setMouseTracking(True)
         self.setWindowTitle(title)
@@ -558,8 +586,7 @@ class _FrameChrome:
         return cls._frame_art
 
     def _frame_init(self, title):
-        self.setWindowFlags(self.windowFlags()
-                            | Qt.WindowType.FramelessWindowHint)
+        apply_window_identity(self)
         self.setMouseTracking(True)
         self.setWindowTitle(title)
         self._frame_title = title

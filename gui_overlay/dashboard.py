@@ -29,7 +29,7 @@ from PyQt6.QtWidgets import (
     QListWidgetItem, QTextEdit, QMessageBox, QSplitter, QApplication,
     QTableWidget, QTableWidgetItem, QHeaderView
 )
-from PyQt6.QtCore import Qt, QUrl, QObject, pyqtSignal, QSize
+from PyQt6.QtCore import Qt, QUrl, QObject, pyqtSignal, QSize, QTimer
 from PyQt6.QtGui import QDesktopServices, QFont
 
 # Only probe availability here; do NOT instantiate any web view at import time.
@@ -98,6 +98,27 @@ class WebTab(QWidget):
             self.view.setUrl(QUrl(self.url))
         except Exception as e:
             self._show_fallback(f"Web view failed to start ({e}).")
+
+
+class TradeSiteTab(WebTab):
+    """The official PoE2 trade site in its OWN full-size tab. Price Check
+    pushes searches here (open_search) instead of squeezing a browser into
+    its bottom strip."""
+
+    DEFAULT_URL = "https://www.pathofexile.com/trade2/search/poe2"
+
+    def __init__(self, parent=None):
+        super().__init__(self.DEFAULT_URL, parent)
+
+    def open_search(self, url):
+        """Navigate to a specific search URL (creates the view on demand)."""
+        self.url = url or self.DEFAULT_URL
+        self.ensure_loaded()
+        if self.view is not None:
+            try:
+                self.view.setUrl(QUrl(self.url))
+            except Exception:
+                pass
 
 
 def _placeholder(title, lines):
@@ -733,6 +754,7 @@ class BuildTab(QWidget):
     VIEW_CONTAINER = "container"
     VIEW_TEXT = "text"
     art_ready = pyqtSignal(str, str)     # (slot_key, image_path)
+    review_ready = pyqtSignal(str, str)  # (reply, error) — AI review lands here
 
     # Paperdoll positions (row, col) — laid out like Path of Building.
     _SLOT_POS = {
@@ -744,10 +766,13 @@ class BuildTab(QWidget):
     _RARITY_COL = {"unique": "#af6025", "rare": "#d9cf8a",
                    "magic": "#8888ff", "normal": "#a8a8a8"}
 
-    def __init__(self, build_provider=None, parent=None, config=None):
+    def __init__(self, build_provider=None, parent=None, config=None,
+                 ask_ai=None, sim_stats=None):
         super().__init__(parent)
         self.build_provider = build_provider   # callable -> dict (see overlay.current_build_view)
         self.config = config if isinstance(config, dict) else {}
+        self.ask_ai = ask_ai                   # overlay.ask_ai_text
+        self.sim_stats = sim_stats             # callable -> live sim summary str
         self.mode = self.config.get("build_view_mode", self.VIEW_CONTAINER)
         if self.mode not in (self.VIEW_CONTAINER, self.VIEW_TEXT):
             self.mode = self.VIEW_CONTAINER
@@ -769,6 +794,17 @@ class BuildTab(QWidget):
                                    "and the full text breakdown.")
         self.toggle_btn.clicked.connect(self._toggle_view)
         top.addWidget(self.toggle_btn)
+        # W4-05: the Orb's written review of THIS character in the text view.
+        rev = QPushButton("AI review")
+        rev.setProperty("gem", "diamond")
+        rev.setToolTip(
+            "The Orb reads the full parse + live sim numbers and writes a "
+            "review: how the build actually does its damage (mechanism and "
+            "scaling), how the gear serves it, passives + support choices, "
+            "and where DPS or defence is hiding — nearby nodes, support "
+            "swaps, weak gear slots.")
+        rev.clicked.connect(self._ai_review)
+        top.addWidget(rev)
         # W3-12 v1: shareable HTML character sheet with the REAL PoB numbers.
         exp = QPushButton("Export sheet (HTML)")
         exp.setProperty("gem", "sapphire")
@@ -790,7 +826,10 @@ class BuildTab(QWidget):
                                 "font-family:Consolas,monospace;font-size:12px;")
         lay.addWidget(self.view, 1)
 
-        # Container view: stats chips + items + skills, structured.
+        # Container view = the ONE-PAGE character sheet (poe.ninja-style):
+        # headline stats, resistances, scaling profile, full equipment with
+        # mods, and every skill group — all scrollable on a single page.
+        # (The old paperdoll split lives on in the HTML export's tooltips.)
         self.container = QWidget()
         cv = QVBoxLayout(self.container)
         cv.setContentsMargins(0, 0, 0, 0)
@@ -798,36 +837,90 @@ class BuildTab(QWidget):
         self.sim_lbl.setStyleSheet(f"color:{EMERALD};font-size:12px;font-weight:bold;")
         self.sim_lbl.setWordWrap(True)
         cv.addWidget(self.sim_lbl)
-        self.stats_lbl = QLabel("")
-        self.stats_lbl.setTextFormat(Qt.TextFormat.RichText)
-        self.stats_lbl.setWordWrap(True)
-        cv.addWidget(self.stats_lbl)
-        split = QSplitter(Qt.Orientation.Horizontal)
-        # PoB-style paperdoll: gear slots laid out like the app, item art
-        # pulled in async, full description on hover (poe.ninja-style).
-        from PyQt6.QtWidgets import QGridLayout, QScrollArea
-        gear_scroll = QScrollArea(); gear_scroll.setWidgetResizable(True)
-        gear_host = QWidget()
-        self.gear_grid = QGridLayout(gear_host)
-        self.gear_grid.setSpacing(8)
-        self.gear_empty = QLabel(
-            "No build loaded.\n\nLoad a character from the overlay (green "
-            "medallion → 'Load my saved PoB builds' or paste a PoB code) and "
-            "the gear appears here, Path-of-Building style.")
-        self.gear_empty.setWordWrap(True)
-        self.gear_empty.setStyleSheet(f"color:{MUTED};font-size:13px;")
-        self.gear_grid.addWidget(self.gear_empty, 0, 0, 1, 3)
-        gear_scroll.setWidget(gear_host)
-        split.addWidget(gear_scroll)
-        self.skills_list = QListWidget()
-        split.addWidget(self.skills_list)
-        split.setSizes([660, 300])
-        cv.addWidget(split, 1)
+        from PyQt6.QtWidgets import QTextBrowser
+        self.sheet_view = QTextBrowser()
+        self.sheet_view.setOpenExternalLinks(True)
+        self.sheet_view.setStyleSheet(
+            f"QTextBrowser {{ background:{BG0}; border:none; }}")
+        cv.addWidget(self.sheet_view, 1)
         lay.addWidget(self.container, 1)
         self._gear_cards = {}
         self.art_ready.connect(self._on_art)
+        self.review_ready.connect(self._on_review_ready)
 
         self._apply_mode()
+
+    def _ai_review(self):
+        """W4-05: the Orb's deep character review, grounded in the parse +
+        live sim. Asks for damage MECHANISM deduction (how the build actually
+        kills — e.g. a Corrupted Blood scaler is not a bleed build; the
+        knowledge-corrections layer rides along in the AI context), gear/
+        passive/support analysis, and concrete sim-checkable improvements."""
+        data = self._last or {}
+        if not data.get("loaded"):
+            self.hint.setText("Load a character first — then ask for its review.")
+            return
+        if not self.ask_ai:
+            self.hint.setText("AI channel not connected — configure a brain "
+                              "in Settings.")
+            return
+        sim = ""
+        try:
+            sim = (self.sim_stats() or "") if self.sim_stats else ""
+        except Exception:
+            pass
+        import json as _json
+        build_txt = _json.dumps(data, ensure_ascii=False, default=str)[:9000]
+        prompt = (
+            "Write a structured review of my currently loaded PoE2 character. "
+            "Use ONLY the parse and sim numbers below plus the verified facts "
+            "in your context — no invented mods or numbers.\n\n"
+            "Cover, in order:\n"
+            "1. DAMAGE MECHANISM — deduce how this build actually deals its "
+            "damage and what scales it (skill + supports + gear + passives "
+            "working together). If the mechanism is unusual (e.g. Corrupted "
+            "Blood stacking, ailment conversion), name it and explain the "
+            "scaling chain explicitly.\n"
+            "2. GEAR — how each notable piece serves the build; which slot is "
+            "weakest and why.\n"
+            "3. PASSIVES + SUPPORTS — do the tree and support choices match "
+            "the mechanism? Any dead or low-value picks?\n"
+            "4. IMPROVEMENTS — nearby passive nodes worth pathing to, support "
+            "gem swaps, and the single biggest gear upgrade; for each, say "
+            "what the live sim should show if it works (so I can verify in "
+            "the Build Sim tab).\n"
+            "5. DEFENCE — where I'm most likely to die and the cheapest fix.")
+        sim_note = sim if sim else \
+            "(sim not running — flag every suggestion as unverified)"
+        prompt += f"\n\nLIVE SIM: {sim_note}\n\nFULL PARSE:\n{build_txt}"
+        self.hint.setText("The Orb is reading the build… (review lands in "
+                          "the text view)")
+        if self.mode != self.VIEW_TEXT:
+            self._toggle_view()
+
+        # The ask_ai callback fires on a WORKER thread; QTimer.singleShot
+        # can't start timers there (the review looked like it did nothing).
+        # A queued signal marshals it to the UI thread properly.
+        def _cb(reply, error=None):
+            self.review_ready.emit(reply or "", error or "")
+        try:
+            self.ask_ai(prompt, _cb)
+        except Exception as e:
+            self.hint.setText(f"Review failed: {e}")
+
+    def _on_review_ready(self, reply, error):
+        if reply and not error:
+            self.view.setPlainText(reply)
+            self.hint.setText("Review written. Regenerate any time — it also "
+                              "lands in the character's folio.")
+            try:
+                from core_engine.character_folio import CharacterFolio
+                name = (self._last or {}).get("character") or "character"
+                CharacterFolio(name).write_doc("review", reply)
+            except Exception:
+                pass
+        else:
+            self.hint.setText(f"Review failed: {error or 'no reply'}")
 
     def _export_sheet(self):
         data = self._last or {}
@@ -866,7 +959,8 @@ class BuildTab(QWidget):
         container = self.mode == self.VIEW_CONTAINER
         self.container.setVisible(container)
         self.view.setVisible(not container)
-        self.toggle_btn.setText("View: Container ▣" if container else "View: Text ≡")
+        # Label = the view the click TAKES you to (it read backwards before).
+        self.toggle_btn.setText("View: Text ≡" if container else "View: Sheet ▣")
 
     # -- data ---------------------------------------------------------------
     def refresh(self):
@@ -880,7 +974,7 @@ class BuildTab(QWidget):
         if data.get("error"):
             self.head.setText("Build unavailable")
             self.view.setPlainText("Could not read the build: " + data["error"])
-            self._fill_container(None, "")
+            self._fill_sheet(None)
             return
         if not data.get("loaded"):
             self.head.setText("No build loaded")
@@ -890,7 +984,7 @@ class BuildTab(QWidget):
                 "Load one from the overlay: click the green Character Selector "
                 "medallion, then 'Load my saved PoB builds' and 'Set active' — or "
                 "paste a PoB code / pobb.in link. It will appear here.")
-            self._fill_container(None, "")
+            self._fill_sheet(None)
             return
         self.head.setText(data.get("character") or "Loaded build")
         sc = data.get("scaling") or {}
@@ -918,8 +1012,31 @@ class BuildTab(QWidget):
             lines.append("\n" + data["guidance"])
         self.view.setPlainText("\n".join(lines))
 
-        # Container view content.
-        self._fill_container(data.get("full"), data.get("sim") or "")
+        # Container view content: the one-page character sheet.
+        self._fill_sheet(data)
+
+    def _fill_sheet(self, data):
+        """Render the poe.ninja-style one-pager into the container view."""
+        if not hasattr(self, "sheet_view"):
+            return
+        if not data or not data.get("loaded"):
+            self.sim_lbl.setText("")
+            self.sheet_view.setHtml(
+                "<div style='color:#9aa4b2;font-size:13px;padding:20px;'>"
+                "No build loaded.<br><br>Load a character from the overlay "
+                "(green medallion → 'Load my saved PoB builds' or paste a "
+                "PoB code) and the full character sheet appears here — "
+                "stats, resistances, gear with mods, and every skill link, "
+                "poe.ninja style but with YOUR real PoB numbers.</div>")
+            return
+        self.sim_lbl.setText(("LIVE SIM: " + data["sim"]) if data.get("sim")
+                             else "")
+        try:
+            from core_engine.character_sheet import build_character_sheet_html
+            self.sheet_view.setHtml(
+                build_character_sheet_html(data, embedded=True))
+        except Exception as e:
+            self.sheet_view.setPlainText(f"Sheet render failed: {e}")
 
     _STAT_CHIPS = [  # (PoB PlayerStat key, label, accent)
         ("TotalDPS", "DPS", "#e87284"), ("CombinedDPS", "Combined DPS", "#e87284"),
@@ -1394,8 +1511,22 @@ class ExchangeTab(QWidget):
         save_h.setProperty("gem", "emerald")
         save_h.clicked.connect(self._save_holdings)
         hrow.addWidget(save_h)
+        scan_h = QPushButton("Scan currency-tab screenshot…")
+        scan_h.setProperty("gem", "sapphire")
+        scan_h.setToolTip(
+            "In game: open your currency stash tab and screenshot it (the "
+            "ruby medallion on the mirror, or any screenshot). Kalandra OCRs "
+            "the counts and fills the table — review, then Save holdings.")
+        scan_h.clicked.connect(self._scan_holdings_screenshot)
+        hrow.addWidget(scan_h)
         hrow.addStretch()
         rv.addLayout(hrow)
+        tip_h = QLabel("Tip: screenshot your currency stash tab in game and "
+                       "scan it here — counts fill in automatically; you "
+                       "confirm before saving.")
+        tip_h.setWordWrap(True)
+        tip_h.setStyleSheet(f"color:{MUTED};font-size:10px;")
+        rv.addWidget(tip_h)
         self.worth_lbl = QLabel("Portfolio: refresh prices to value it.")
         self.worth_lbl.setStyleSheet(f"color:{GOLD_LIGHT};font-weight:bold;")
         self.worth_lbl.setWordWrap(True)
@@ -1491,6 +1622,59 @@ class ExchangeTab(QWidget):
             except (TypeError, ValueError):
                 out[name] = 0.0
         return out
+
+    def _scan_holdings_screenshot(self):
+        """OCR a currency-tab screenshot into the holdings table. Counts land
+        in the table for REVIEW — nothing saves until 'Save holdings'."""
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Pick a currency-tab screenshot", "data_engine/snapshots",
+            "Images (*.png *.jpg *.jpeg)")
+        if not path:
+            return
+        try:
+            import pytesseract
+            from PIL import Image
+        except Exception:
+            self.worth_lbl.setText(
+                "Screenshot scanning needs OCR: pip install pytesseract "
+                "pillow (plus the Tesseract engine — see Setup & "
+                "Dependencies).")
+            return
+        try:
+            text = pytesseract.image_to_string(Image.open(path))
+        except Exception as e:
+            self.worth_lbl.setText(f"OCR failed: {e}")
+            return
+        # Match "1,234" style counts near currency names, and "23x Chaos Orb"
+        # tooltip style. Case-insensitive, tolerant of OCR noise.
+        import re
+        low = text.lower()
+        found = {}
+        for i in range(self.hold_tbl.rowCount()):
+            name = self.hold_tbl.item(i, 0).text()
+            n = name.lower()
+            for pat in (rf"([\d,]+)\s*x?\s*{re.escape(n)}",
+                        rf"{re.escape(n)}\s*x?\s*([\d,]+)"):
+                m = re.search(pat, low)
+                if m:
+                    try:
+                        found[name] = int(m.group(1).replace(",", ""))
+                    except Exception:
+                        pass
+                    break
+        if not found:
+            self.worth_lbl.setText(
+                "No currency counts recognized in that screenshot — make "
+                "sure the stash tab text is readable (hover tooltips OCR "
+                "best), or type the counts directly.")
+            return
+        for i in range(self.hold_tbl.rowCount()):
+            name = self.hold_tbl.item(i, 0).text()
+            if name in found:
+                self.hold_tbl.setItem(i, 1, QTableWidgetItem(str(found[name])))
+        self.worth_lbl.setText(
+            f"Scanned {len(found)} currency counts from the screenshot — "
+            f"review the table, then 'Save holdings'.")
 
     def _save_holdings(self):
         self.config["holdings"] = self._holdings()
@@ -1608,15 +1792,25 @@ class PriceCheckTab(QWidget):
         root.addLayout(srow)
 
         self.summary = QTextEdit(); self.summary.setReadOnly(True)
-        self.summary.setMaximumHeight(150)
+        self.summary.setMaximumHeight(110)
         self.summary.setStyleSheet(f"background:{BG1};color:{TEXT};font-size:12px;")
         root.addWidget(self.summary)
-        # The official trade site lives INSIDE the tab; parsed filters will be
-        # pushed into it in a later pass.
-        self.web = None
-        self.web_holder = QVBoxLayout()
-        root.addLayout(self.web_holder, 1)
+
+        # The mod-value board gets the tab's full height (the browser used
+        # to squat here in an unusable strip — it now lives in its own
+        # 'Trade Site' tab; 'Open trade search' pushes searches over there).
+        # Per-mod: search tier, what the mod does for price, and YOUR ledger
+        # median for that mod template as local data accrues.
+        self.mods_table = QTableWidget(0, 4)
+        self.mods_table.setHorizontalHeaderLabels(
+            ["Mod", "Tier", "Why", "Your median (n)"])
+        hh = self.mods_table.horizontalHeader()
+        hh.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        hh.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        self.mods_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        root.addWidget(self.mods_table, 1)
         self._parsed = None
+        self.open_trade_site = None   # dashboard injects: url -> Trade Site tab
 
     def _parse(self):
         text = self.input.toPlainText()
@@ -1632,53 +1826,96 @@ class PriceCheckTab(QWidget):
                                  f"ilvl {info['ilvl']}" if info.get("ilvl") else None)
                      if b]
         html = ["<b>" + " · ".join(head_bits) + "</b>"]
-        # W3-21/23: per-mod value tiers — what to search on, what to exclude,
-        # what drags the price down.
+        # W3-21/23 + W4-12: per-mod value board — tier, why, and YOUR ledger
+        # median per mod template — in the big table (browser moved out).
+        tier_col = {"premium": "#f0d9a8", "good": "#8fd6a0",
+                    "neutral": "#9aa4b2", "filler": "#7d8694",
+                    "downside": "#e08a90"}
+        tier_tag = {"premium": "★ PREMIUM", "good": "＋ good",
+                    "neutral": "· neutral", "filler": "— filler",
+                    "downside": "▼ downside"}
+        led = None
+        try:
+            from core_engine.price_ledger import PriceLedger, mod_template
+            led = PriceLedger()
+        except Exception:
+            pass
+        league = (self.league.currentText() or "Standard").strip()
+        self.mods_table.setRowCount(0)
         try:
             from core_engine.trade_tools import mod_insights
-            ins = mod_insights(info)
-            tier_col = {"premium": "#f0d9a8", "good": "#8fd6a0",
-                        "neutral": "#9aa4b2", "filler": "#7d8694",
-                        "downside": "#e08a90"}
-            tier_tag = {"premium": "★ PREMIUM", "good": "＋ good",
-                        "neutral": "· neutral", "filler": "— filler",
-                        "downside": "▼ downside"}
-            if ins["mods"]:
-                html.append("")
-                for m, tier, tip in ins["mods"][:14]:
-                    c = tier_col[tier]
-                    html.append(f"<span style='color:{c};'>{tier_tag[tier]}"
-                                f"</span>  {m}  <i style='color:#6b7280;'>"
-                                f"({tip})</i>")
-            if ins["advice"]:
-                html.append("")
-                html.append("<b style='color:#f0c987;'>Search strategy:</b>")
-                for a in ins["advice"]:
-                    html.append(f"&nbsp;&nbsp;→ {a}")
+            rows = mod_insights(info)["mods"]
         except Exception:
-            for m in (info.get("mods") or [])[:12]:
-                html.append("• " + m)
-        html.append("")
-        html.append("<i>Uniques search by name; rares by base type. 'Open trade "
-                    "search' shows real listings.</i>")
+            rows = [(m, "neutral", "") for m in (info.get("mods") or [])]
+        for m, tier, tip in rows[:40]:
+            r = self.mods_table.rowCount()
+            self.mods_table.insertRow(r)
+            it_mod = QTableWidgetItem(str(m))
+            it_tier = QTableWidgetItem(tier_tag.get(tier, tier))
+            _c = _qcolor(tier_col.get(tier, "#9aa4b2"))
+            if _c is not None:
+                it_tier.setForeground(_c)
+            it_why = QTableWidgetItem(str(tip or ""))
+            med = ""
+            if led is not None:
+                try:
+                    tpl, _vals = mod_template(m)
+                    mv = led.mod_value(tpl, league=league)
+                    if mv:
+                        med = f"~{mv[0]:g} {mv[1]} ({mv[2]})"
+                except Exception:
+                    pass
+            it_med = QTableWidgetItem(med)
+            for col, it in enumerate((it_mod, it_tier, it_why, it_med)):
+                self.mods_table.setItem(r, col, it)
+        try:
+            from core_engine.trade_tools import mod_insights
+            advice = mod_insights(info)["advice"]
+            if advice:
+                html.append("")
+                html.append("<b style='color:#f0c987;'>Search strategy:</b> "
+                            + "  →  ".join(advice))
+        except Exception:
+            pass
+        html.append("<i>Uniques search by name; rares by base type. 'Open "
+                    "trade search' opens listings in the Trade Site tab. "
+                    "'Your median' fills in as your price-check history grows "
+                    "— sockets/quality/base adjustments sharpen with it.</i>")
         self.summary.setHtml("<br>".join(html))
         self.open_btn.setEnabled(True)
+        # W4-12 (local-first): remember this check in the price ledger — the
+        # seed data for mod-value estimates. Local SQLite only; the community
+        # upload layer is opt-in and separate. When the ledger already knows
+        # enough about these mods, show its estimate (clearly labeled as your
+        # own historical data, not a market quote).
+        try:
+            from core_engine.price_ledger import PriceLedger
+            led2 = PriceLedger()
+            led2.log_check(info, league=league)
+            est = led2.estimate_item(info, league=league)
+            if est:
+                self.summary.setHtml(
+                    self.summary.toHtml() +
+                    f"<br><span style='color:#8fd6a0;'>Ledger estimate: "
+                    f"~{est['estimate']} {est['currency']} "
+                    f"({est['known_mods']}/{est['total_mods']} mods known from "
+                    f"your {led2.stats()['priced']} priced checks — your own "
+                    f"history, not a market quote)</span>")
+        except Exception:
+            pass
 
     def _open_trade(self):
         league = (self.league.currentText() or "Standard").strip()
         url = _trade_search_url(self._parsed or {}, league)
-        # Contained browser first (same crash-safe pattern as Live Search);
-        # external browser only as fallback.
-        if WEBENGINE_AVAILABLE:
+        # The search opens in the dedicated Trade Site tab (full-size browser)
+        # — the dashboard injects open_trade_site and switches tabs. External
+        # browser only as a fallback when the tab isn't available.
+        if self.open_trade_site:
             try:
-                if self.web is None:
-                    from PyQt6.QtWebEngineWidgets import QWebEngineView
-                    self.web = QWebEngineView()
-                    self.web_holder.addWidget(self.web, 1)
-                self.web.setUrl(QUrl(url))
+                self.open_trade_site(url)
                 return
             except Exception:
-                self.web = None
+                pass
         try:
             QDesktopServices.openUrl(QUrl(url))
         except Exception as e:
@@ -1932,6 +2169,11 @@ class PobLiveTab(QWidget):
                 self, f"Locate {self.TITLE_MATCH}", "", "Programs (*.exe)")
             if exe:
                 self.config[self.EXE_KEY] = exe
+                # Keep the install dir in sync so the mirror's Character
+                # Selector ("Load my saved PoB builds") scans THIS install's
+                # Builds folder — one PoB, one truth.
+                if not self.config.get(self.DIR_KEY):
+                    self.config[self.DIR_KEY] = os.path.dirname(exe)
                 try:
                     from gui_overlay.mirror_window import save_config
                     save_config(self.config)
@@ -2033,6 +2275,54 @@ class PobLiveTab(QWidget):
                              QEvent.Type.Enter):
                 self._focus_pob()
         return super().eventFilter(obj, ev)
+
+    def shutdown(self):
+        """App is closing: leave no orphaned or mangled window behind.
+
+        Rules (Christian, 2026-07-04): a PoB/Overlay WE launched gets a
+        graceful close (WM_CLOSE to its window, terminate only as fallback);
+        an EXTERNAL instance we merely adopted is NOT ours to close — its
+        window is released back to the desktop untouched."""
+        import sys
+        hwnd = getattr(self, "_hwnd", None)
+        proc = getattr(self, "_proc", None)
+        hwnd_is_ours = False
+        if hwnd and proc is not None and sys.platform == "win32":
+            try:
+                import ctypes
+                u32 = ctypes.windll.user32
+                pid = ctypes.c_ulong(0)
+                u32.GetWindowThreadProcessId(ctypes.c_void_p(hwnd),
+                                             ctypes.byref(pid))
+                hwnd_is_ours = (pid.value == proc.pid)
+            except Exception:
+                pass
+        if proc is not None and proc.poll() is None:
+            if hwnd_is_ours:
+                try:
+                    import ctypes
+                    ctypes.windll.user32.PostMessageW(
+                        ctypes.c_void_p(hwnd), 0x0010, 0, 0)   # WM_CLOSE
+                except Exception:
+                    pass
+            try:
+                proc.wait(timeout=4)
+            except Exception:
+                try:
+                    proc.terminate()
+                except Exception:
+                    pass
+        if hwnd and not hwnd_is_ours and sys.platform == "win32":
+            # Adopted an external instance: hand its window back, untouched.
+            try:
+                import ctypes
+                u32 = ctypes.windll.user32
+                u32.SetParent(ctypes.c_void_p(hwnd), None)
+                u32.ShowWindow(ctypes.c_void_p(hwnd), 9)       # SW_RESTORE
+            except Exception:
+                pass
+        self._hwnd = None
+        self._proc = None
 
     def _builds_changed(self, _path):
         import os
@@ -2168,6 +2458,7 @@ def _qcolor(hexstr):
 # Canonical dashboard tabs (label, default-on). Users pick which to show in
 # Settings; the order here is the order they appear.
 DASHBOARD_TABS = [
+    ("Companion", True),
     ("Terminal", True),
     ("Build (PoB)", True),
     ("Build Sim", True),
@@ -2176,15 +2467,131 @@ DASHBOARD_TABS = [
     ("Reserve / BIS", True),
     ("Issues / Changelog", True),
     ("Price Check", True),
+    ("Trade Site", True),
     ("Exchange", True),
     ("Crafting", True),
     ("Filter Editor", True),
     ("Live Search", True),
+    ("Grind Tracker", True),
     ("Craft of Exile", True),
     ("FilterBlade", True),
     ("poe.ninja", True),
 ]
 _DASHBOARD_TAB_DEFAULTS = dict(DASHBOARD_TABS)
+
+
+# Category layout for the dashboard (Christian, 2026-07-04): top-level
+# group tabs, tools nested inside. Unknown/custom labels land in "Other".
+TAB_GROUPS = [
+    ("🦉 Companion", ["Companion", "Terminal"]),
+    ("⚔ Build Planning", ["Build (PoB)", "Build Sim", "PoB (live)",
+                           "PoE Overlay 2"]),
+    ("💰 Items & Trading", ["Price Check", "Trade Site", "Live Search",
+                             "Exchange", "Reserve / BIS", "poe.ninja"]),
+    ("🔨 Crafting", ["Crafting", "Craft of Exile"]),
+    ("📊 Loot & Filters", ["Filter Editor", "FilterBlade", "Grind Tracker"]),
+    ("🛠 Other", []),
+]
+_GROUP_OF = {lbl: g for g, lbls in TAB_GROUPS for lbl in lbls}
+_GROUP_ORDER = [g for g, _ in TAB_GROUPS]
+
+
+class GroupedTabs(QWidget):
+    """Two-level tabs that quack like the QTabWidget the rest of the code
+    was written against: addTab / count / widget / tabText / currentIndex /
+    setCurrentIndex / setCurrentWidget / currentChanged all speak FLAT
+    indices, while the UI shows category tabs with the tools nested inside.
+    Indices are stable (assigned in add order), so the lazy web-tab loader
+    and every other consumer keeps working unchanged."""
+
+    currentChanged = pyqtSignal(int)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        self.outer = QTabWidget()
+        lay.addWidget(self.outer)
+        self._flat = []        # [(widget, label)] in add order = flat index
+        self._inner = {}       # group name -> inner QTabWidget
+        self.outer.currentChanged.connect(lambda _i: self._announce())
+
+    def _group_for(self, label):
+        return _GROUP_OF.get(label, "🛠 Other")
+
+    def _inner_for(self, gname):
+        if gname in self._inner:
+            return self._inner[gname]
+        inner = QTabWidget()
+        inner.currentChanged.connect(lambda _i: self._announce())
+        # Insert the group page at its canonical position among those present.
+        want = _GROUP_ORDER.index(gname) if gname in _GROUP_ORDER else 999
+        pos = 0
+        for i in range(self.outer.count()):
+            g = self.outer.tabText(i)
+            have = _GROUP_ORDER.index(g) if g in _GROUP_ORDER else 999
+            if have < want:
+                pos = i + 1
+        self.outer.insertTab(pos, inner, gname)
+        self._inner[gname] = inner
+        return inner
+
+    def _announce(self):
+        idx = self.currentIndex()
+        if idx >= 0:
+            self.currentChanged.emit(idx)
+
+    # ---- QTabWidget-compatible surface (flat indices) ----
+    def addTab(self, w, label):
+        self._inner_for(self._group_for(label)).addTab(w, str(label))
+        self._flat.append((w, str(label)))
+        return len(self._flat) - 1
+
+    def count(self):
+        return len(self._flat)
+
+    def widget(self, i):
+        return self._flat[i][0] if 0 <= i < len(self._flat) else None
+
+    def tabText(self, i):
+        return self._flat[i][1] if 0 <= i < len(self._flat) else ""
+
+    def currentIndex(self):
+        inner = self.outer.currentWidget()
+        if not isinstance(inner, QTabWidget):
+            return -1
+        w = inner.currentWidget()
+        for i, (fw, _l) in enumerate(self._flat):
+            if fw is w:
+                return i
+        return -1
+
+    def setCurrentWidget(self, w):
+        for gname, inner in self._inner.items():
+            if inner.indexOf(w) >= 0:
+                self.outer.setCurrentWidget(inner)
+                inner.setCurrentWidget(w)
+                return
+
+    def setCurrentIndex(self, i):
+        w = self.widget(i)
+        if w is not None:
+            self.setCurrentWidget(w)
+
+    def tabBar(self):
+        inner = self.outer.currentWidget()
+        return inner.tabBar() if isinstance(inner, QTabWidget) \
+            else self.outer.tabBar()
+
+    def current_tab_center_in(self, ref):
+        """Center of the CURRENT inner tab header, mapped into `ref` coords
+        (the owl's arrow aims with this)."""
+        inner = self.outer.currentWidget()
+        if not isinstance(inner, QTabWidget):
+            return None
+        bar = inner.tabBar()
+        r = bar.tabRect(inner.currentIndex())
+        return bar.mapTo(ref, r.center())
 
 
 class KalandraDashboard(KalandraFrameWindow):
@@ -2225,13 +2632,21 @@ class KalandraDashboard(KalandraFrameWindow):
             header.addWidget(warn)
         root.addLayout(header)
 
-        self.tabs = QTabWidget()
+        self.tabs = GroupedTabs()
         root.addWidget(self.tabs, 1)
         self._build_tab = None
 
         # Build all tabs first, THEN connect currentChanged, so the initial
         # signal can't fire into a half-built state. Each tab is only added if
         # the user has it enabled (Settings -> Dashboard tabs).
+        if self._tab_on("Companion"):
+            try:
+                from gui_overlay.companion_tab import CompanionTab
+                self.tabs.addTab(CompanionTab(ask_ai=self.ask_ai,
+                                              config=self.config), "Companion")
+            except Exception as e:
+                self.tabs.addTab(_placeholder("Companion", [f"Unavailable: {e}"]),
+                                 "Companion")
         if self._tab_on("Terminal"):
             try:
                 self.tabs.addTab(TerminalTab(), "Terminal")
@@ -2239,7 +2654,12 @@ class KalandraDashboard(KalandraFrameWindow):
                 self.tabs.addTab(_placeholder("Terminal", [f"Terminal unavailable: {e}"]), "Terminal")
         if self._tab_on("Build (PoB)"):
             try:
-                self._build_tab = BuildTab(self.build_provider, config=self.config)
+                self._build_tab = BuildTab(
+                    self.build_provider, config=self.config,
+                    ask_ai=self.ask_ai,
+                    sim_stats=(lambda: self.pob_sim.stats_summary()
+                               if self.pob_sim and self.pob_sim.has_build()
+                               else ""))
                 self.tabs.addTab(self._build_tab, "Build (PoB)")
             except Exception as e:
                 self._build_tab = None
@@ -2280,8 +2700,24 @@ class KalandraDashboard(KalandraFrameWindow):
                 self._price_tab = PriceCheckTab(config=self.config)
                 self.tabs.addTab(self._price_tab, "Price Check")
             except Exception as e:
+                self._price_tab = None
                 self.tabs.addTab(_placeholder("Price Check", [f"Unavailable: {e}"]),
                                  "Price Check")
+        self._trade_tab = None
+        if self._tab_on("Trade Site"):
+            try:
+                self._trade_tab = TradeSiteTab()
+                self._web_tabs[self.tabs.count()] = self._trade_tab
+                self.tabs.addTab(self._trade_tab, "Trade Site")
+            except Exception as e:
+                self.tabs.addTab(_placeholder("Trade Site", [f"Unavailable: {e}"]),
+                                 "Trade Site")
+        # Price Check pushes searches into the full-size Trade Site tab.
+        if getattr(self, "_price_tab", None) is not None and self._trade_tab is not None:
+            def _open_in_trade(url):
+                self._trade_tab.open_search(url)
+                self.tabs.setCurrentWidget(self._trade_tab)
+            self._price_tab.open_trade_site = _open_in_trade
         if self._tab_on("Exchange"):
             try:
                 self.tabs.addTab(ExchangeTab(config=self.config), "Exchange")
@@ -2307,6 +2743,15 @@ class KalandraDashboard(KalandraFrameWindow):
                 self.tabs.addTab(_placeholder("Live Search", [f"Unavailable: {e}"]),
                                  "Live Search")
 
+        if self._tab_on("Grind Tracker"):
+            try:
+                from gui_overlay.grind_tab import GrindTab
+                self.tabs.addTab(GrindTab(config=self.config), "Grind Tracker")
+            except Exception as e:
+                self.tabs.addTab(_placeholder("Grind Tracker",
+                                              [f"Unavailable: {e}"]),
+                                 "Grind Tracker")
+
         for label, url in [
             ("Craft of Exile", "https://www.craftofexile.com/"),
             ("FilterBlade", "https://www.filterblade.xyz/"),
@@ -2317,12 +2762,49 @@ class KalandraDashboard(KalandraFrameWindow):
                 self._web_tabs[self.tabs.count()] = wt
                 self.tabs.addTab(wt, label)
 
+        # User-defined tabs (Settings -> Custom tabs): a website in a contained
+        # browser (like poe.ninja) or a program adopted into the tab (like
+        # PoB). Config: custom_tabs = [{name, kind: web|app, url|exe}].
+        import re as _re
+        for ct in (self.config.get("custom_tabs") or []):
+            try:
+                name = (ct.get("name") or "Custom").strip()[:24] or "Custom"
+                if ct.get("kind") == "web" and ct.get("url"):
+                    wt = WebTab(ct["url"])
+                    self._web_tabs[self.tabs.count()] = wt
+                    self.tabs.addTab(wt, name)
+                elif ct.get("kind") == "app" and ct.get("exe"):
+                    import os as _os
+                    slug = "custom_" + _re.sub(r"\W+", "_", name.lower())
+                    self.config.setdefault(slug + "_exe", ct["exe"])
+                    base = _os.path.basename(ct["exe"])
+                    cls = type("CustomAppTab_" + slug, (PobLiveTab,), {
+                        "EXE_KEY": slug + "_exe",
+                        "DIR_KEY": slug + "_dir",
+                        "TITLE_MATCH": _os.path.splitext(base)[0],
+                        "EXE_CANDS": (base,),
+                    })
+                    self.tabs.addTab(cls(config=self.config), name)
+            except Exception as e:
+                self.tabs.addTab(_placeholder(ct.get("name", "Custom"),
+                                              [f"Custom tab failed: {e}"]),
+                                 ct.get("name", "Custom"))
+
         if self.tabs.count() == 0:
             self.tabs.addTab(_placeholder("No tabs enabled", [
                 "You've hidden every dashboard tab.",
                 "Re-enable some in Settings -> Dashboard tabs."]), "Dashboard")
 
         self.tabs.currentChanged.connect(self._on_tab_changed)
+
+        # Kalandra's owl (the mirror's bottom decoration, now a guide): perches
+        # in the corner and walks the user through each tab in chat bubbles.
+        # Purely additive - if the art or module is missing, no owl, no crash.
+        try:
+            from gui_overlay.owl_guide import OwlGuide
+            self._owl_guide = OwlGuide(self, self.tabs, config=self.config)
+        except Exception:
+            self._owl_guide = None
 
     def _tab_on(self, label):
         prefs = (self.config or {}).get("dashboard_tabs", {}) or {}
@@ -2385,6 +2867,13 @@ class KalandraDashboard(KalandraFrameWindow):
                       "proposes concrete upgrades (gear, gems, passives). W3-11.")
         up.clicked.connect(self._suggest_upgrades)
         brow.addWidget(up)
+        setpob = QPushButton("Set PoB folder…")
+        setpob.setProperty("gem", "sapphire")
+        setpob.setToolTip("Point the sim at your Path of Building install — "
+                          "the folder that contains HeadlessWrapper.lua (or "
+                          "its src/ subfolder does).")
+        setpob.clicked.connect(self._set_pob_folder)
+        brow.addWidget(setpob)
         brow.addStretch()
         cl.addLayout(brow)
         # Scrolling, read-only output — never grows the window.
@@ -2491,10 +2980,55 @@ class KalandraDashboard(KalandraFrameWindow):
         if hasattr(self, "buildsim_label"):
             self.buildsim_label.setPlainText(text)
 
+    def _set_pob_folder(self):
+        """One-click fix for 'PoB install not found': pick the folder, we
+        verify HeadlessWrapper.lua (root or src/), save pob_install_dir, and
+        refresh the sim readiness message."""
+        import os
+        start = self.config.get("pob_install_dir") or \
+            os.path.dirname(self.config.get("pob_exe") or "") or ""
+        d = QFileDialog.getExistingDirectory(self, "Pick your Path of Building "
+                                                   "folder", start)
+        if not d:
+            return
+        found = None
+        for cand in (d, os.path.join(d, "src")):
+            if os.path.exists(os.path.join(cand, "HeadlessWrapper.lua")):
+                found = d
+                break
+        if not found:
+            self._bridge.buildsim_text.emit(
+                f"That folder has no HeadlessWrapper.lua (checked {d} and its "
+                f"src/). Pick the PoB install or source folder — for the "
+                f"bundled copy: tools/PathOfBuildingCommunity-PathOfBuilding-"
+                f"PoE2.")
+            return
+        self.config["pob_install_dir"] = found
+        try:
+            from gui_overlay.mirror_window import save_config
+            save_config(self.config)
+        except Exception:
+            pass
+        self._bridge.buildsim_text.emit(
+            f"PoB folder set: {found}\nRe-run 'Refresh build stats' — if the "
+            f"engine still isn't ready, 'Run self-test' will say exactly why.")
+
     def _on_tab_changed(self, idx):
         wt = self._web_tabs.get(idx)
         if wt is not None:
             wt.ensure_loaded()
+
+    def shutdown_embedded(self):
+        """Called by the overlay's exit path: gracefully close every
+        containerized program we launched (PoB, PoE Overlay 2, custom app
+        tabs) and release any adopted external windows."""
+        for i in range(self.tabs.count()):
+            w = self.tabs.widget(i)
+            if hasattr(w, "shutdown"):
+                try:
+                    w.shutdown()
+                except Exception:
+                    pass
 
     def closeEvent(self, event):
         # Hide instead of destroy: reopening is instant, and we avoid tearing

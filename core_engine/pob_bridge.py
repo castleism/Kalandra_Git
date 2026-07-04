@@ -23,17 +23,55 @@ class KalandraPoBBridge:
     # ------------------------------------------------------------------
     @staticmethod
     def candidate_build_dirs():
-        """Likely folders where Path of Building 2 stores saved builds (.xml)."""
+        """Likely folders where Path of Building 2 stores saved builds (.xml).
+        The PoE2 community fork's DEFAULT user dir is
+        %APPDATA%\Path of Building Community (PoE2)\ — its absence from this
+        list is why freshly-saved PoB characters never appeared in the
+        selector (2026-07-04)."""
         import os
         home = os.path.expanduser("~")
         docs = os.path.join(home, "Documents")
+        appdata = os.environ.get("APPDATA", "")
         return [
+            os.path.join(appdata, "Path of Building Community (PoE2)", "Builds"),
+            os.path.join(appdata, "Path of Building Community", "Builds"),
+            os.path.join(docs, "Path of Building Community (PoE2)", "Builds"),
             os.path.join(docs, "Path of Building (PoE2)", "Builds"),
             os.path.join(docs, "Path of Building", "Builds"),
             os.path.join(home, "Path of Building (PoE2)", "Builds"),
-            os.path.join(os.environ.get("APPDATA", ""), "Path of Building", "Builds"),
+            os.path.join(appdata, "Path of Building", "Builds"),
             os.path.join(os.environ.get("PROGRAMDATA", ""), "Path of Building", "Builds"),
         ]
+
+    @staticmethod
+    def pob_settings_build_path(install_dir=None):
+        """THE authoritative answer: parse PoB's own Settings.xml for its
+        configured buildPath (users can point PoB anywhere; guessing loses).
+        Checks the install dir (portable mode) and the fork's APPDATA user
+        dirs. Returns the path or None. Never raises."""
+        import os
+        import re as _re
+        appdata = os.environ.get("APPDATA", "")
+        cands = []
+        if install_dir:
+            cands.append(os.path.join(install_dir, "Settings.xml"))
+        cands += [
+            os.path.join(appdata, "Path of Building Community (PoE2)", "Settings.xml"),
+            os.path.join(appdata, "Path of Building Community", "Settings.xml"),
+            os.path.join(appdata, "Path of Building", "Settings.xml"),
+        ]
+        for c in cands:
+            try:
+                if not os.path.exists(c):
+                    continue
+                with open(c, "r", encoding="utf-8", errors="ignore") as f:
+                    txt = f.read()
+                m = _re.search(r'buildPath="([^"]+)"', txt)
+                if m and os.path.isdir(m.group(1)):
+                    return m.group(1)
+            except Exception:
+                continue
+        return None
 
     # Directory names we must NEVER descend into when hunting for PoB 'Builds'
     # folders. The app folder can now contain the bundled offline installers,
@@ -89,6 +127,10 @@ class KalandraPoBBridge:
         usual Documents locations."""
         import os
         dirs = []
+        # PoB's own configured build folder outranks every guess.
+        sp = self.pob_settings_build_path(pob_install_dir)
+        if sp:
+            dirs.append(sp)
         if extra_dir:
             dirs.append(extra_dir)
         if pob_install_dir:
@@ -509,28 +551,50 @@ class KalandraPoBBridge:
         stat weights to set in PoB's tree Power Report."""
         if not isinstance(full, dict) or "error" in full:
             return {}
-        # Gather all descriptive text from the build.
-        blobs = []
+        # Weighted text pools: what the build USES (main skill + its gems)
+        # must dominate what it merely WEARS (item text) — and defensive
+        # lines must never count as damage: a "+35% Fire Resistance" roll
+        # was polluting fire's score on every single build.
+        import re as _re
+        skill_blobs, item_blobs = [], []
         if full.get("main_skill"):
-            blobs.append(full["main_skill"])
+            skill_blobs += [full["main_skill"]] * 8
         for g in full.get("skills", []) or []:
-            blobs.extend(g.get("actives") or [])
-            blobs.extend(g.get("supports") or [])
+            w = 5 if g.get("is_main") else 2
+            for a in (g.get("actives") or []):
+                skill_blobs += [a] * w
+            for s2 in (g.get("supports") or []):
+                skill_blobs += [s2] * max(w - 1, 1)
+        _DEFENSIVE = _re.compile(
+            r"resistance|regenerat|to maximum (life|mana|energy shield)"
+            r"|to all attributes|to (strength|dexterity|intelligence)"
+            r"|stun|movement speed|life on|mana on|charm|flask", _re.I)
+        _FLAT = _re.compile(r"adds? \d+ to \d+ \w+ damage", _re.I)
         for it in full.get("items", []) or []:
-            blobs.append(it.get("name", ""))
-            blobs.extend(it.get("mods") or [])
-        text = " ".join(b for b in blobs if b).lower()
+            item_blobs.append(it.get("name", ""))
+            for m in (it.get("mods") or []):
+                if _DEFENSIVE.search(m or ""):
+                    continue          # a fire RES roll is not fire DAMAGE
+                item_blobs += [m] * (3 if _FLAT.search(m or "") else 1)
+        skill_text = " ".join(b for b in skill_blobs if b).lower()
+        item_text = " ".join(b for b in item_blobs if b).lower()
+        text = skill_text + " " + item_text
 
-        def score(groups):
+        def score(groups, t=None):
+            t = text if t is None else t
             out = {}
             for label, kws in groups.items():
-                n = sum(text.count(k) for k in kws)
+                n = sum(t.count(k) for k in kws)
                 if n:
                     out[label] = n
             return out
 
         dmg = score(cls._DMG_KEYWORDS)
         mech = score(cls._MECH_KEYWORDS)
+        # Minion builds: the SKILLS decide (a "minion damage" gear roll on a
+        # spark build must not flip the profile).
+        if score({"m": cls._MECH_KEYWORDS["minions"]}, skill_text):
+            mech["minions"] = mech.get("minions", 0) + 10
         # Crit from PoB stats too (more reliable than keywords alone).
         s = full.get("stats", {})
         try:

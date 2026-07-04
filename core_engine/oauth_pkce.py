@@ -4,7 +4,7 @@ A small, dependency-light OAuth 2.1 Authorization-Code + PKCE flow for desktop
 apps (RFC 7636 + RFC 8252 loopback redirect).
 
 Used for the GGG (pathofexile.com) account link. GGG issues client_ids for
-public/PKCE clients on request (see GGG_OAuth_Application_Letter.md at repo
+public/PKCE clients on request (see docs/GGG_OAuth_Application_Letter.md at repo
 root); until one is granted the Settings button explains what's pending.
 
 Flow:
