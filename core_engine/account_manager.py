@@ -48,6 +48,9 @@ SERVICES = {
                            "note": "Build guides."},
     "poe2wiki":           {"name": "poe2wiki.net", "kind": "link",
                            "note": "Community wiki (CC BY-NC) — scraped data source."},
+    "github":             {"name": "GitHub (issue & changelog sync)", "kind": "api_key",
+                           "note": "Personal-access token ('repo' scope) so the Issues tab "
+                                   "can post to github.com/castleism/Kalandra_Git."},
     "openai":             {"name": "OpenAI / ChatGPT (AI brain)", "kind": "api_key",
                            "note": "Powers the talking Divine Orb's answers."},
     "gemini":             {"name": "Google Gemini (AI brain)", "kind": "api_key",

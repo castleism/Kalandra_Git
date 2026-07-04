@@ -100,23 +100,211 @@ def live_search_url(league):
     return f"https://www.pathofexile.com/trade2/search/poe2/{quote(league)}"
 
 
-def offline_craft_guidance(goal):
-    return (
-        "Crafting plan (offline heuristic — connect an AI brain in Settings for a "
-        "tailored, step-by-step plan):\n\n"
-        f"Goal: {goal}\n\n"
-        "General PoE2 approach:\n"
-        "  1. Pick the right base: item level high enough for the tiers you want, "
-        "and the correct base type for your damage/defense.\n"
-        "  2. Normal -> Magic: Orb of Transmutation, then Augmentation for a "
-        "second mod.\n"
-        "  3. Magic -> Rare: Regal Orb adds a third mod.\n"
-        "  4. Targeted mods: Essences for a guaranteed mod, Runes/Soul Cores for "
-        "socketed effects, and Omens to bias outcomes.\n"
-        "  5. Finish: Exalted Orbs add mods to a rare; Chaos Orbs reroll a single "
-        "mod; Divine Orbs reroll numeric values within tier.\n\n"
-        "For exact probabilities and cost, open Craft of Exile — it simulates the "
-        "deterministic odds for your chosen base and mods.")
+# ---------------------------------------------------------------------------
+# Crafting planner (W3-13) — goal-aware, multi-route, cost-annotated
+# ---------------------------------------------------------------------------
+
+# What the player might ask for -> the mod groups that deliver it.
+_GOAL_MODS = {
+    "phys":      (("physical", "phys"), "flat 'Adds # to # Physical Damage' + '%increased Physical Damage' (both prefixes)"),
+    "elemental": (("elemental", "fire", "cold", "lightning"), "flat elemental damage prefixes"),
+    "chaos":     (("chaos",), "flat/over-time chaos damage"),
+    "crit":      (("crit",), "'+#% Critical Hit Chance' and '+#% Critical Damage Bonus' (suffixes)"),
+    "speed":     (("attack speed", "cast speed", "speed"), "'%increased Attack Speed' (suffix)"),
+    "life":      (("life", "hp"), "'+# to maximum Life'"),
+    "es":        (("energy shield", " es",), "'%increased Energy Shield' + flat ES"),
+    "resist":    (("resist", "res "), "elemental resistance suffixes"),
+    "spell":     (("spell", "caster"), "'%increased Spell Damage' + '+# to Level of all Spell Skills'"),
+    "mana":      (("mana",), "mana / mana regeneration"),
+}
+
+_BASE_WORDS = ("quarterstaff", "staff", "bow", "crossbow", "spear", "mace",
+               "sceptre", "wand", "dagger", "claw", "sword", "axe", "flail",
+               "helmet", "body armour", "chest", "gloves", "boots", "shield",
+               "buckler", "focus", "quiver", "ring", "amulet", "belt")
+
+
+def _econ_price(econ_rows, name_fragment):
+    """Value (in Exalted Orbs) of the first economy row matching the fragment."""
+    for r in (econ_rows or []):
+        if name_fragment.lower() in str(r.get("name", "")).lower():
+            try:
+                return float(r.get("value"))
+            except (TypeError, ValueError):
+                return None
+    return None
+
+
+def offline_craft_guidance(goal, econ_rows=None):
+    """A concrete, route-based crafting plan built from the goal text.
+
+    Pure logic (no AI, no network). If `econ_rows` (poe.ninja currency rows)
+    are provided, each route gets a rough cost line in Exalted Orbs."""
+    g = (goal or "").lower()
+    wants = [key for key, (words, _d) in _GOAL_MODS.items()
+             if any(w in g for w in words)]
+    base = next((b for b in _BASE_WORDS if b in g), None)
+
+    lines = [f"CRAFTING PLAN — {goal.strip() or 'unspecified goal'}", ""]
+    lines.append(f"Target base: {base.title() if base else 'not stated — name the base type for tier advice'}")
+    if wants:
+        lines.append("Mods that deliver this goal:")
+        for k in wants:
+            lines.append(f"  • {_GOAL_MODS[k][1]}")
+        if len(wants) > 4:
+            lines.append("  ⚠ That's more mod groups than one rare can hold well — "
+                         "prioritize 3-4.")
+    else:
+        lines.append("Goal keywords not recognized — say what stats matter "
+                     "(phys, crit, life, resists, spell...).")
+    lines.append("")
+    lines.append("Base rules: item level 81+ unlocks the top tiers; white bases "
+                 "from endgame maps or bought cheap on trade.")
+    lines.append("")
+
+    def cost(frag, n=1):
+        v = _econ_price(econ_rows, frag)
+        return f" (~{v * n:,.1f} ex)" if v else ""
+
+    lines.append("ROUTE A — Essence-guaranteed (recommended for a defined goal):")
+    lines.append("  1. Start with a WHITE base.")
+    lines.append("  2. Use the Essence matching your key mod (guarantees it while "
+                 "rolling the item to Magic/Rare).")
+    lines.append(f"  3. Regal{cost('Regal Orb')} → Exalt{cost('Exalted Orb')} to "
+                 "fill remaining affixes; stop when 4+ useful mods land.")
+    lines.append(f"  4. Divine{cost('Divine Orb')} only when every mod is right "
+                 "but numbers roll low.")
+    lines.append("")
+    lines.append("ROUTE B — Chaos-reroll (budget, higher variance):")
+    lines.append(f"  1. Buy the cheapest RARE with 2 of your mods already on it.")
+    lines.append(f"  2. Chaos Orb{cost('Chaos Orb')} rerolls ONE mod in PoE2 — "
+                 "snipe the bad affix; walk away when the swap would risk a "
+                 "good one.")
+    lines.append("")
+    lines.append("ROUTE C — Omen-biased (endgame, expensive):")
+    lines.append("  1. Omens constrain outcomes (e.g. Omen of Sinistral Erasure "
+                 "protects suffixes when annulling).")
+    lines.append(f"  2. Pair with Exalts{cost('Exalted Orb')} for controlled "
+                 "finishing; check current Omen prices before committing.")
+    lines.append("")
+    lines.append("Exact odds & expected cost: open the Craft of Exile tab and "
+                 "simulate this base + mod set (it does the deterministic math).")
+    if econ_rows is None:
+        lines.append("(Refresh the Exchange tab once to annotate routes with "
+                     "live prices.)")
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Clipboard price estimate (W3-20) — currency & fragments via poe.ninja rows
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Pricing insight engine (W3-23) — which mods carry the price tag
+# ---------------------------------------------------------------------------
+# Tiers: "premium" = drives the price, search for it; "good" = worth including;
+# "filler" = safe to EXCLUDE from the search (widens results, rarely changes
+# value); "downside" = actively lowers value on most items.
+
+# Order matters: downsides are checked FIRST so "reduced attack speed" never
+# reads as a premium "attack speed" roll. All plain substrings, lowercase.
+_MOD_TIERS = [
+    ("downside", ("thorns", "reflect", "reduced attack speed",
+                  "reduced cast speed", "reduced movement speed",
+                  "increased attribute requirements", "you take")),
+    ("filler", ("light radius", "stun threshold", "mana on kill",
+                "life on kill", "reduced flask", "flask charges",
+                "stun buildup", "daze", "on low life")),
+    ("premium", ("maximum life", "to level of", "critical damage",
+                 "critical hit damage", "attack speed", "cast speed",
+                 "movement speed", "increased physical damage",
+                 "increased spell damage", "increased energy shield",
+                 "all elemental resistances", "chaos resistance",
+                 "increased rarity")),
+    ("good", ("resistance", "adds", "accuracy", "increased damage",
+              "critical hit chance", "maximum mana", "maximum energy shield",
+              "armour", "evasion", "spirit", "projectile", "leech",
+              "regenerate")),
+]
+
+
+def _tier_for(mod):
+    low = mod.lower()
+    for tier, frags in _MOD_TIERS:
+        if any(f in low for f in frags):
+            return tier
+    return "neutral"
+
+
+def mod_insights(info):
+    """Per-mod value analysis for the parsed item (W3-23).
+
+    Returns {'mods': [(mod_text, tier, advice), ...], 'advice': [str, ...]}.
+    Tiers: premium / good / neutral / filler / downside. Pure heuristics —
+    honest about being heuristics — and never invents a price."""
+    out = {"mods": [], "advice": []}
+    mods = (info or {}).get("mods") or []
+    tips = {
+        "premium": "search for this — it carries the price",
+        "good": "include if you want close comparisons",
+        "neutral": "judgment call — include only if it matters to the buyer",
+        "filler": "EXCLUDE from the search — widens results, rarely adds value",
+        "downside": "hurts the price on most items — expect lower offers",
+    }
+    counts = {}
+    for m in mods:
+        t = _tier_for(m)
+        counts[t] = counts.get(t, 0) + 1
+        out["mods"].append((m, t, tips[t]))
+    if not mods:
+        out["advice"].append("No explicit mods parsed — for uniques the name "
+                             "itself is the price; for bases, ilvl matters most.")
+        return out
+    prem = counts.get("premium", 0)
+    if prem >= 3:
+        out["advice"].append(f"{prem} premium mods on one item — price it "
+                             "AMBITIOUSLY and search with all of them included.")
+    elif prem >= 1:
+        out["advice"].append("Search with the premium mod(s) + one good mod; "
+                             "leave the rest unchecked to see the real market.")
+    else:
+        out["advice"].append("No premium mods — this trades close to its base; "
+                             "search by base type + ilvl only.")
+    if counts.get("filler"):
+        out["advice"].append(f"{counts['filler']} filler mod(s) — excluding "
+                             "them from the search will surface far more "
+                             "comparable listings without changing value.")
+    if counts.get("downside"):
+        out["advice"].append("Has value-LOWERING mod(s) — comparable clean "
+                             "items will list higher than yours.")
+    out["advice"].append("Heuristic tiers, not gospel — meta shifts; confirm "
+                         "against live listings.")
+    return out
+
+
+def estimate_value(info, econ_rows):
+    """Best-effort instant estimate for a parsed item.
+
+    Only quotes things poe.ninja's currency feed actually prices (stackable
+    currency); everything else returns None -> the popup links the trade
+    search instead of fabricating a number. Returns (value_ex, note) or None."""
+    if not info or not econ_rows:
+        return None
+    name = (info.get("name") or info.get("base") or "").strip()
+    if not name:
+        return None
+    cls = (info.get("item_class") or "").lower()
+    if "currency" not in cls and "fragment" not in cls and cls != "":
+        return None
+    for r in econ_rows:
+        rname = str(r.get("name", ""))
+        if rname.lower() == name.lower():
+            try:
+                v = float(r.get("value"))
+            except (TypeError, ValueError):
+                return None
+            return v, f"{rname}: ~{v:,.2f} Exalted each (poe.ninja)"
+    return None
 
 
 if __name__ == "__main__":

@@ -64,13 +64,31 @@ def run_startup_checks():
     print("=========================================================\n")
 
 
+def _pause_if_console():
+    """input() that never raises: under pythonw (Kalandra.bat) there is no
+    stdin, and a bare input() would raise RuntimeError right where we're
+    trying to show an error."""
+    try:
+        input()
+    except Exception:
+        pass
+
+
 def main():
     run_startup_checks()
     try:
-        from gui_overlay.mirror_window import KalandraOverlayApp, PYQT_AVAILABLE
+        from gui_overlay.mirror_window import (KalandraOverlayApp, PYQT_AVAILABLE,
+                                               _install_crash_guard)
+        # CRITICAL: without a custom excepthook, PyQt6 calls qFatal() -> abort()
+        # on ANY unhandled Python exception raised inside a Qt slot — the app
+        # vanishes instantly with no trace. The guard writes the traceback to
+        # data_engine/crash.log and keeps the app alive. It was previously
+        # installed only when mirror_window.py was run directly, so launches
+        # via main.py (Kalandra.bat / the Diagnostic Launcher) had NO guard.
+        _install_crash_guard()
         if not PYQT_AVAILABLE:
             print("FATAL: PyQt6 is not installed. Run: pip install PyQt6")
-            input()
+            _pause_if_console()
             return 1
         from PyQt6.QtWidgets import QApplication
         from PyQt6.QtCore import QTimer, Qt
@@ -96,7 +114,16 @@ def main():
     except Exception:
         print("\nCRITICAL RUNTIME EXCEPTION:")
         traceback.print_exc()
-        input("Press Enter to close...")
+        # Also persist it: under pythonw there's no console to read this from.
+        try:
+            with open(os.path.join("data_engine", "crash.log"), "a", encoding="utf-8") as f:
+                from datetime import datetime as _dt
+                f.write(f"\n===== {_dt.now().isoformat()} (main.py) =====\n")
+                traceback.print_exc(file=f)
+        except Exception:
+            pass
+        print("Press Enter to close...")
+        _pause_if_console()
         return 1
 
 

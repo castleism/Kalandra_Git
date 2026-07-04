@@ -53,6 +53,8 @@ class WikiScraper:
         self.api_url = None
         self._fail_count = 0
         self._throttled = False
+        self._cooldown_until = 0.0   # shared: when Cloudflare throttles, ALL workers pause
+        self._consec_fail = 0        # consecutive failures -> circuit breaker
         self._tl = threading.local()
         self._db_lock = threading.Lock()
         self._ensure_table()
@@ -158,6 +160,11 @@ class WikiScraper:
                   "redirects": "1",  # resolve redirect pages to their target
                   "formatversion": "2", "format": "json"}
         sess = self._session()
+        # If another worker just got throttled, wait out the shared cooldown
+        # instead of hammering Cloudflare (which extends the block).
+        wait = self._cooldown_until - time.time()
+        if wait > 0:
+            time.sleep(min(wait, 90))
         # Up to 3 API attempts with exponential backoff; back off HARD on an
         # explicit rate-limit/blocked status (429/503/403) so the site recovers.
         for attempt in range(3):
@@ -169,6 +176,8 @@ class WikiScraper:
                     return self._html_to_text(html) if html else ""
                 if r.status_code in (429, 503, 403):
                     self._throttled = True
+                    self._cooldown_until = max(self._cooldown_until,
+                                               time.time() + 30.0 * (attempt + 1))
                     time.sleep(3.0 * (attempt + 1) + random.uniform(0, 1.5))
                 else:
                     time.sleep(1.0 * (attempt + 1) + random.uniform(0, 0.5))
@@ -183,6 +192,8 @@ class WikiScraper:
                     return self._html_to_text(r.text)
                 if r.status_code in (429, 503, 403):
                     self._throttled = True
+                    self._cooldown_until = max(self._cooldown_until,
+                                               time.time() + 30.0 * (attempt + 1))
                     time.sleep(3.0 * (attempt + 1))
             except Exception:
                 time.sleep(1.0)
@@ -229,14 +240,21 @@ class WikiScraper:
             url = self.page_url(title)
             with self._db_lock:
                 if text:
-                    self.db.insert_scoured_data(
-                        topic=title, content=ATTRIBUTION + url + "\n\n" + text,
-                        url=url, version="poe2wiki")
-                    stored += 1
-                    self._mark(url, "done")
+                    self._consec_fail = 0
+                    try:
+                        self.db.insert_scoured_data(
+                            topic=title, content=ATTRIBUTION + url + "\n\n" + text,
+                            url=url, version="poe2wiki")
+                        stored += 1
+                        self._mark(url, "done")
+                    except Exception as e:
+                        # A single DB hiccup must not abort the whole sync.
+                        self._log(f"DB write failed for {title}: {e} (will retry next sync)")
+                        self._mark(url, "error")
                 else:
                     # Don't bury it as 'done' -- leave it 'error' so the NEXT sync
                     # retries it (most failures are transient throttling).
+                    self._consec_fail += 1
                     self._mark(url, "error")
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=concurrency) as pool:
@@ -252,6 +270,18 @@ class WikiScraper:
             while futures:
                 if stop_flag is not None and stop_flag.is_set():
                     self._log("Wiki crawl paused (progress saved).")
+                    break
+                if self._consec_fail >= 30:
+                    # Circuit breaker: Cloudflare is blocking EVERY request.
+                    # Without this, the rest of the run burns ~20s per page
+                    # marking thousands of pages 'error' — which looked like
+                    # the sync "stopping partway". Stop cleanly instead;
+                    # 'error' pages are retried on the next sync.
+                    self._log("poe2wiki is blocking all requests right now "
+                              "(30 consecutive failures). Stopping this source "
+                              "for this run — progress is saved and the failed "
+                              "pages will be retried next sync. Tip: wait 10-15 "
+                              "minutes before re-syncing so the block expires.")
                     break
                 done, _ = concurrent.futures.wait(
                     futures, timeout=30,

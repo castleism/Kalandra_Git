@@ -314,7 +314,7 @@ class ObsidianExporter:
                 body += ["", "## Scaling & Keywords",
                          "*(everything below interacts with or scales this)*"]
                 for h in hubs:
-                    body.append(f"- [[Keyword - {h}|{h}]]")
+                    body.append(f"- [[{_slug('Keyword - ' + h)}|{h}]]")
             if related:
                 body += ["", "## Related"]
                 for r in related:
@@ -345,18 +345,29 @@ class ObsidianExporter:
                 for fn in sorted(set(by_cat[cat])):
                     out.append(f"- [[{fn}]]")
                 out.append("")
-            with open(os.path.join(self.out_dir, "Keywords", f"Keyword - {hub}.md"),
-                      "w", encoding="utf-8") as f:
-                f.write("\n".join(out) + "\n")
+            # Hub names can contain characters that are illegal in filenames
+            # (e.g. "Chill / Freeze" -- the slash made Windows treat it as a
+            # folder and the WHOLE export aborted). Sanitize, and never let one
+            # bad file kill the run.
+            hub_path = os.path.join(self.out_dir, "Keywords",
+                                    _slug(f"Keyword - {hub}") + ".md")
+            try:
+                with open(hub_path, "w", encoding="utf-8") as f:
+                    f.write("\n".join(out) + "\n")
+            except Exception as e:
+                self._log(f"Failed writing {hub_path}: {e}")
 
         # 5) category MOCs
         for folder, members in categories.items():
             moc = [f"# Map of Content — {folder}", "", f"{len(set(members))} entries.", ""]
             for m in sorted(set(members)):
                 moc.append(f"- [[{m}]]")
-            with open(os.path.join(self.out_dir, "_Maps", f"MOC - {folder}.md"),
-                      "w", encoding="utf-8") as f:
-                f.write("\n".join(moc) + "\n")
+            moc_path = os.path.join(self.out_dir, "_Maps", _slug(f"MOC - {folder}") + ".md")
+            try:
+                with open(moc_path, "w", encoding="utf-8") as f:
+                    f.write("\n".join(moc) + "\n")
+            except Exception as e:
+                self._log(f"Failed writing {moc_path}: {e}")
 
         # 6) home note
         index = ["# Kalandra Knowledge Map", "",
@@ -369,7 +380,7 @@ class ObsidianExporter:
             index.append(f"- [[MOC - {folder}|{folder}]] ({len(set(categories[folder]))})")
         index += ["", "## Scaling & mechanic hubs"]
         for hub in sorted(h for h, m in hub_members.items() if m):
-            index.append(f"- [[Keyword - {hub}|{hub}]]")
+            index.append(f"- [[{_slug('Keyword - ' + hub)}|{hub}]]")
         with open(os.path.join(self.out_dir, "Kalandra Knowledge Map.md"),
                   "w", encoding="utf-8") as f:
             f.write("\n".join(index) + "\n")

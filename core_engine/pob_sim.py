@@ -66,10 +66,25 @@ def find_pob_install(explicit=None):
     return None
 
 
+def _valid_luajit(path):
+    """True only for a real luajit interpreter binary. Rejects the
+    'LuaJIT-For-Windows.exe' SELF-EXTRACTING INSTALLER, which people (and the
+    installer UI) naturally point config at — running it would pop an
+    extraction GUI instead of executing our harness."""
+    if not path or not os.path.exists(path):
+        return False
+    base = os.path.basename(str(path)).lower()
+    if "for-windows" in base or "setup" in base or "install" in base:
+        return False
+    return base.startswith("luajit")
+
+
 class PoBSimulator:
     def __init__(self, install_dir=None, luajit=None, harness=None, logger=None):
         self.install_dir = find_pob_install(install_dir)
-        self.luajit = luajit or self._find_luajit()
+        # Validate even an explicitly-passed path: config.json's luajit_path
+        # frequently ends up pointing at the installer, not the interpreter.
+        self.luajit = luajit if _valid_luajit(luajit) else self._find_luajit()
         self.harness = harness or os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                                HARNESS_NAME)
         self.logger = logger
@@ -97,7 +112,7 @@ class PoBSimulator:
         try:
             with open(os.path.join("data_engine", "config.json"), "r", encoding="utf-8") as f:
                 cp = json.load(f).get("luajit_path")
-            if cp and os.path.exists(cp):
+            if _valid_luajit(cp):
                 return cp
         except Exception:
             pass
@@ -109,7 +124,7 @@ class PoBSimulator:
             if p:
                 return p
         env = os.environ.get("LUAJIT_PATH")
-        if env and os.path.exists(env):
+        if _valid_luajit(env):
             return env
         # vendored under tools/ — find the actual interpreter (bin/luajit.exe),
         # never the installer.
@@ -132,7 +147,9 @@ class PoBSimulator:
             return "PoB simulator ready."
         bits = ["PoB sandbox simulator isn't ready. Run:  python setup_pob_sim.py", ""]
         if not self.luajit:
-            bits.append("  - LuaJIT not found on PATH (install LuaJIT).")
+            bits.append("  - LuaJIT interpreter not found. Note: \"LuaJIT-For-Windows.exe\"")
+            bits.append("    is the INSTALLER, not LuaJIT itself — point \"luajit_path\" at")
+            bits.append("    the extracted ...\\bin\\luajit.exe instead.")
         if not self.install_dir:
             bits.append("  - Path of Building 2 install not found. Install it, or set")
             bits.append("    \"pob_install_dir\" in data_engine/config.json to its folder")

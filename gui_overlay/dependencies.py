@@ -149,10 +149,17 @@ class _Sig(QObject):
     done = pyqtSignal()
 
 
-class DependenciesDialog(QDialog):
+from gui_overlay.kalandra_window import KalandraFrameDialog  # noqa: E402
+
+
+class DependenciesDialog(KalandraFrameDialog):
     def __init__(self, config, save_config, parent=None, oodle_self_test=None,
                  on_extract_gamedata=None):
-        super().__init__(parent)
+        try:
+            from version import KALANDRA_VERSION as _KV0
+        except Exception:
+            _KV0 = "0.0.0"
+        super().__init__(f"KALANDRA v{_KV0} — SETUP & DEPENDENCIES", parent)
         self.config = config
         self.save_config = save_config
         self.oodle_self_test = oodle_self_test
@@ -165,23 +172,11 @@ class DependenciesDialog(QDialog):
         self.sig.log.connect(self._append_log)
         self.sig.done.connect(self._refresh)
 
-        try:
-            from version import KALANDRA_VERSION as _KV
-        except Exception:
-            _KV = "0.0.0"
-        self.setWindowTitle(f"Kalandra v{_KV} — Setup & Dependencies")
         # Keep the minimum small enough to fit modest screens; the scroll area
         # holds the content, so the window must be allowed to shrink below the
         # content height (otherwise the bottom buttons clip on shorter displays).
+        # Styling + window controls come from the frame chrome (W3-06).
         self.setMinimumSize(700, 460)
-        self.setStyleSheet(
-            f"QDialog{{background:{BG0};color:{TEXT};}}QLabel{{color:{TEXT};}}"
-            f"QCheckBox{{color:{TEXT};}}"
-            f"QLineEdit{{background:#0c0f14;color:#fff;border:1px solid #3a4150;padding:4px;border-radius:4px;}}"
-            f"QPlainTextEdit{{background:#0c0f14;color:#cfe;border:1px solid #2a313d;}}"
-            f"QPushButton{{background:{BG2};color:{TEXT};border:1px solid #3a4350;padding:6px 12px;border-radius:6px;}}"
-            f"QPushButton:hover{{background:#283040;border-color:{GOLD};}}"
-            f"QFrame#card{{background:{BG1};border:1px solid #2a313d;border-radius:8px;}}")
         self._build()
         # Open at a height that fits the screen (leave room for taskbar/title bar);
         # the scroll area handles anything taller.
@@ -196,7 +191,7 @@ class DependenciesDialog(QDialog):
             self.resize(760, 760)
 
     def _build(self):
-        root = QVBoxLayout(self)
+        root = self.body
         title = QLabel("Setup & Dependencies"); title.setStyleSheet(f"color:{GOLD};font-size:18px;font-weight:bold;")
         root.addWidget(title)
         root.addWidget(self._muted("Installed pieces are checked & greyed. Tick missing pip "

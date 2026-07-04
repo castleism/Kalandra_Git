@@ -386,10 +386,20 @@ class KalandraPoBBridge:
                     lines = [l.strip() for l in raw.splitlines() if l.strip()]
                     name = lines[1] if len(lines) > 1 and lines[0].startswith("Rarity") else lines[0]
                     mods = [l for l in lines if self._is_mod(l)][:8]
+                    # Rarity + base feed the dashboard's visual gear view
+                    # (rarity colors the frame; base locates the item art).
+                    rarity = (lines[0].split(":", 1)[1].strip()
+                              if lines[0].lower().startswith("rarity") else "")
+                    base = ""
+                    if rarity.lower() in ("rare", "unique") and len(lines) > 2:
+                        base = lines[2]
+                    elif rarity.lower() in ("magic", "normal"):
+                        base = name
                     # Jewel if name/base or an "Item Class: Jewels" line says so.
                     head = " ".join(lines[:4]).lower()
                     is_jewel = ("jewel" in name.lower()) or ("item class: jewel" in head)
                     id_to_item[it.get("id")] = {"name": name, "mods": mods,
+                                                "rarity": rarity, "base": base,
                                                 "is_jewel": is_jewel}
                 # Slots from the ACTIVE item set.
                 active_set = items_node.get("activeItemSet")

@@ -28,7 +28,7 @@ import time
 import threading
 import concurrent.futures
 from collections import deque
-from datetime import datetime
+from datetime import datetime, timedelta
 from urllib.parse import urljoin, urlparse, urldefrag
 
 _ERR = []
@@ -228,6 +228,33 @@ class KalandraScraper:
             return {"url": url, "ok": False, "error": str(e)}
 
     # -- main crawl ------------------------------------------------------------
+    def requeue_stale(self, days=7, cap=2000):
+        """Roll the OLDEST previously-crawled pages back to 'queued' so their
+        CONTENT gets re-checked (poe2db pages change after every patch). Without
+        this, a page marked 'done' was never fetched again — a "sync" after full
+        site coverage made zero HTTP requests. Capped per run so a sync stays
+        quick; repeated syncs rotate through the whole site over time."""
+        try:
+            cutoff = (datetime.now() - timedelta(days=days)).isoformat()
+            with self._db_lock:
+                # 'skip' rows are included: they're usually transient fetch
+                # failures (timeouts, hiccups) that deserve another try later.
+                self.db.cursor.execute(
+                    "SELECT url FROM crawl_state WHERE status IN ('done','skip') "
+                    "AND fetched_at < ? ORDER BY fetched_at ASC LIMIT ?",
+                    (cutoff, int(cap)))
+                urls = [r[0] for r in self.db.cursor.fetchall()]
+                for u in urls:
+                    self._mark(u, "queued")
+            if urls:
+                self._log("DATABASE",
+                          f"Content refresh: re-checking {len(urls)} pages last "
+                          f"fetched over {days} days ago.")
+            return len(urls)
+        except Exception as e:
+            self._log("DATABASE", f"Stale requeue skipped: {e}")
+            return 0
+
     def crawl(self, max_pages=50000, seeds=None, stop_flag=None,
               concurrency=10, delay=0.0):
         """Concurrent, resumable crawl with a PERSISTENT frontier.
@@ -251,9 +278,22 @@ class KalandraScraper:
             self.db.conn.commit()
             frontier = self._load_frontier()
 
+        if not frontier:
+            # Everything ever discovered is 'done'. A sync must still CHECK the
+            # site: re-queue the seed index pages so we actually hit poe2db,
+            # refresh their content, and discover any newly-added pages.
+            with self._db_lock:
+                for s in seeds:
+                    self._mark(urljoin(self.base_url, s), "queued")
+            frontier = self._load_frontier()
+            self._log("DATABASE",
+                      f"Frontier empty — re-checking {len(frontier)} poe2db "
+                      f"index pages for new/changed content.")
+
         queue = deque(frontier)
         seen = set(frontier)
         stored = 0
+        updated = 0
         processed = 0
         start_ts = time.time()
         with self._db_lock:
@@ -266,15 +306,31 @@ class KalandraScraper:
 
         def _record(result):
             """Serialized DB work for one finished fetch. Returns stored?(bool)."""
-            nonlocal stored
+            nonlocal stored, updated
             url = result["url"]
             with self._db_lock:
                 if result.get("ok") and result.get("text"):
                     if not self._url_exists_in_ledger(url):
-                        self.db.insert_scoured_data(
-                            topic=result["title"], content=result["text"],
-                            url=url, version=result["version"])
-                        stored += 1
+                        try:
+                            self.db.insert_scoured_data(
+                                topic=result["title"], content=result["text"],
+                                url=url, version=result["version"])
+                            stored += 1
+                        except Exception as e:
+                            # One bad row must not abort the whole crawl; leave
+                            # the page queued so the next sync retries it.
+                            self._log("DATABASE", f"Store failed for {url}: {e}")
+                            self._mark(url, "queued")
+                            return
+                    else:
+                        # Re-fetched page: refresh the stored content in place.
+                        try:
+                            if self.db.update_scoured_data(
+                                    topic=result["title"], content=result["text"],
+                                    url=url, version=result["version"]):
+                                updated += 1
+                        except Exception:
+                            pass
                     for link in result.get("links", []):
                         if link not in seen:
                             seen.add(link)
@@ -337,9 +393,11 @@ class KalandraScraper:
         pending = self.pending_count()
         self._log("DATABASE",
                   f"Crawl section done in {elapsed/60:.1f} min ({rate:.0f} pages/min). "
-                  f"Stored {stored} new; {pending} pages still pending site-wide.")
-        return {"stored": stored, "processed": processed, "pending": pending,
-                "elapsed_min": round(elapsed / 60, 1), "rate_per_min": round(rate)}
+                  f"Stored {stored} new, refreshed {updated}; "
+                  f"{pending} pages still pending site-wide.")
+        return {"stored": stored, "updated": updated, "processed": processed,
+                "pending": pending, "elapsed_min": round(elapsed / 60, 1),
+                "rate_per_min": round(rate)}
 
     def stats(self):
         self.db.cursor.execute("SELECT COUNT(*) FROM knowledge_ledger")

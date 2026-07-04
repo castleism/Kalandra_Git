@@ -111,6 +111,97 @@ class PoENinja:
         return stored
 
 
+    # -- W3-26: price history + daily movers ---------------------------------
+    def store_history(self, db_handler, league, rows=None):
+        """Append today's currency values to economy_history (one row per
+        currency per day — re-running the same day updates in place)."""
+        if db_handler is None:
+            return 0
+        from datetime import date
+        rows = rows if rows is not None else self.get_currency(league)
+        if not rows:
+            return 0
+        cur = db_handler.cursor
+        cur.execute("""CREATE TABLE IF NOT EXISTS economy_history(
+            day TEXT NOT NULL, league TEXT NOT NULL, name TEXT NOT NULL,
+            value REAL, volume REAL,
+            PRIMARY KEY (day, league, name))""")
+        today = date.today().isoformat()
+        n = 0
+        for r in rows:
+            name, val = r.get("name"), r.get("value")
+            if not name or val is None:
+                continue
+            try:
+                cur.execute(
+                    "INSERT OR REPLACE INTO economy_history VALUES (?,?,?,?,?)",
+                    (today, league, str(name), float(val),
+                     float(r.get("volume") or 0)))
+                n += 1
+            except Exception:
+                continue
+        db_handler.conn.commit()
+        return n
+
+    def daily_insights(self, db_handler, league, rows=None, days=7, top=6):
+        """Compare today's values to the trailing average -> movers + advice.
+
+        Returns {'movers': [(name, value, avg, delta_pct)...high&low mixed],
+                 'advice': [str, ...], 'history_days': int}. Pure SQL + math;
+        advisory only, clearly heuristic."""
+        out = {"movers": [], "advice": [], "history_days": 0}
+        if db_handler is None:
+            return out
+        try:
+            cur = db_handler.cursor
+            cur.execute("SELECT COUNT(DISTINCT day) FROM economy_history "
+                        "WHERE league=?", (league,))
+            out["history_days"] = int(cur.fetchone()[0])
+            if out["history_days"] < 2:
+                out["advice"].append(
+                    "Collecting history — refresh once a day; movers appear "
+                    "after two days of snapshots.")
+                return out
+            cur.execute("""
+                SELECT h.name, h.value, avg(p.value) AS avg_v
+                FROM economy_history h
+                JOIN economy_history p
+                  ON p.name = h.name AND p.league = h.league
+                 AND p.day < h.day
+                 AND p.day >= date(h.day, ?)
+                WHERE h.league = ? AND h.day = (
+                    SELECT MAX(day) FROM economy_history WHERE league = ?)
+                GROUP BY h.name
+                HAVING avg_v > 0
+            """, (f"-{int(days)} day", league, league))
+            deltas = []
+            for name, value, avg_v in cur.fetchall():
+                delta = (value - avg_v) / avg_v * 100.0
+                deltas.append((name, value, avg_v, delta))
+            deltas.sort(key=lambda t: abs(t[3]), reverse=True)
+            out["movers"] = [d for d in deltas if abs(d[3]) >= 3.0][:top]
+
+            for name, value, avg_v, delta in out["movers"]:
+                if delta > 0:
+                    out["advice"].append(
+                        f"{name} is {delta:+.0f}% vs its {days}-day average — "
+                        f"a SELL window if you're sitting on a stack.")
+                else:
+                    out["advice"].append(
+                        f"{name} is {delta:+.0f}% vs its {days}-day average — "
+                        f"cheap right now; a BUY window if your build needs it.")
+            if not out["movers"]:
+                out["advice"].append(
+                    f"No currency moved more than 3% vs its {days}-day average "
+                    "— a quiet market; hold.")
+            out["advice"].append(
+                "Heuristic signals from public poe.ninja data — not financial "
+                "advice for your exalts; you place every trade yourself.")
+        except Exception as e:
+            self._log(f"daily_insights failed: {e}")
+        return out
+
+
 if __name__ == "__main__":
     pn = PoENinja(logger=lambda c, m: print(f"[{c}] {m}"))
     print("available:", pn.available)

@@ -95,7 +95,23 @@ view. Saying "show me my build" / "open my PoB" by voice also opens the Build ta
 
 ## 5. Settings & Accounts
 
-Opened with the bottom-right medallion. Contains:
+Opened with the bottom-right medallion. The whole panel wears the shared
+Mirror-of-Kalandra theme (gold leaf + gem-accented buttons: emerald = save,
+ruby = clear, sapphire = connect). Contains:
+
+- **GGG account (OAuth).** "Connect GGG account" runs the official OAuth 2.1
+  PKCE sign-in in your browser once GGG issues a client_id (send them
+  `GGG_OAuth_Application_Letter.md`; paste the id into the field). "Test PoE2
+  API (no login)" proves the trade API is reachable right now.
+- **GitHub (issue & changelog sync).** Paste a personal-access token
+  (`repo` scope — the "Get a key" button opens the right page) and the
+  dashboard's Issues tab can post entries straight to
+  github.com/castleism/Kalandra_Git.
+- **Email.** Pick your provider (Gmail / Outlook / Yahoo / Proton / iCloud);
+  buttons open its sign-in and app-password pages; credentials go to the OS
+  keychain only.
+- **Every linked tool** (poe.ninja, FilterBlade, Exiled Exchange 2, Craft of
+  Exile 2, Maxroll, Mobalytics, poe2wiki…) has an "Open site" button.
 
 - **AI brain + model.** Pick your provider and model (the model field is editable
   because providers change model IDs often). Switching mid-conversation carries
@@ -132,7 +148,20 @@ all gear, and tree-socketed jewels with their mods.
 ## 7. The Dashboard
 
 A single window with tabs (open it from Settings, or double-click the green
-medallion to land on the Build tab).
+medallion to land on the Build tab). Styled by the shared Kalandra theme
+(`gui_overlay/theme.py`); the frameless golden chrome (`KalandraWindow`,
+gem window buttons: ruby closes, sapphire minimizes, emerald maximizes) ships
+behind a demo first — run `python -m gui_overlay.kalandra_window` to preview.
+
+**Recent additions (2026-07-03):**
+- **Build (PoB) view toggle** — switch between "Container" (stat chips, gear
+  table, skill groups with the main one starred) and "Text" (the full
+  breakdown). Your choice is remembered.
+- **Live Search embedded** — the official trade site now loads *inside* the
+  tab (with PyQt6-WebEngine installed; external-browser button still there).
+- **Issues → GitHub** — "Post selected → GitHub" files a real GitHub Issue;
+  "Publish changelog → GitHub" ships the open list as a pre-release note.
+  Needs the GitHub token from Settings.
 
 **Working now:**
 - **Terminal** — total transparency: every backend event in real time (database,
@@ -150,12 +179,18 @@ medallion to land on the Build tab).
   to the developer.
 - **Craft of Exile / FilterBlade / poe.ninja** — embedded web tools.
 
-**Placeholders (not finished yet):**
-- **Price Check** — official trade-API item pricing.
-- **Exchange** — currency/economy tracking over time.
-- **Crafting** — natural-language craft planner.
-- **Filter Editor** — edit your `.filter` by voice/text.
-- **Live Search** — trade searches with overlay notifications (you buy manually).
+**Also working now (completed 2026-06-30):**
+- **Price Check** — paste an item (Ctrl+C in-game → Ctrl+V); Kalandra parses it
+  and opens the official trade search for your league. You buy manually.
+- **Exchange** — live PoE2 economy from poe.ninja (league picker, filter,
+  sortable value/volume table).
+- **Crafting** — describe a goal in plain language; get a realistic craft path
+  plus a Craft of Exile link (uses your AI brain if configured, offline
+  heuristic otherwise).
+- **Filter Editor** — lists every block in your `.filter`, flip Show/Hide and
+  save; writes a `.bak` first and round-trips your file byte-exact.
+- **Live Search** — opens the official trade site's live search for your league
+  (manual whisper-and-buy; nothing automated).
 
 ---
 

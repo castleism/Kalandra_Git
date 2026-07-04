@@ -67,3 +67,7 @@ nulif
 Thumbs.db
 *.log
 unsupported.txt
+
+# Runtime caches from the item-art / sheet features
+data_engine/item_art/
+data_engine/exports/

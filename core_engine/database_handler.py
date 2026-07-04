@@ -91,6 +91,19 @@ class KalandraDBHandler:
         self.conn.commit()
         return self.cursor.lastrowid
 
+    def update_scoured_data(self, topic, content, url, version="Patch 0.5.4"):
+        """Refresh an existing ledger entry in place (same source_url). Used by
+        the crawler's re-check passes: page content changes after patches, and
+        without this a re-fetch was silently discarded."""
+        current_time = datetime.now().isoformat()
+        self.cursor.execute("""
+            UPDATE knowledge_ledger
+               SET topic_tag=?, content_payload=?, scraped_at=?, game_version_tag=?
+             WHERE source_url=?
+        """, (topic, content, current_time, version, url))
+        self.conn.commit()
+        return self.cursor.rowcount
+
     def log_stream_idea(self, idea_text, build_name="Theorycraft"):
         """
         Saves a player's stream notes or raw mechanical theories into the vault.

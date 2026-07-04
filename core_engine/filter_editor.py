@@ -113,6 +113,69 @@ class FilterBlock:
             text = note.lstrip("# ").strip() + "  —  " + text
         return text if len(text) <= maxlen else (text[:maxlen] + "…")
 
+    # -- W3-30: humanized view -------------------------------------------------
+    def style(self):
+        """The visual identity this block gives an item label in game.
+
+        Parses SetTextColor / SetBackgroundColor / SetBorderColor /
+        SetFontSize from the body. Returns dict with 'text', 'bg', 'border'
+        as (r, g, b) tuples (or None) and 'font' (int or None)."""
+        out = {"text": None, "bg": None, "border": None, "font": None}
+        keymap = {"SetTextColor": "text", "SetBackgroundColor": "bg",
+                  "SetBorderColor": "border"}
+        for c in self.conditions():
+            parts = c.split()
+            if not parts:
+                continue
+            if parts[0] in keymap and len(parts) >= 4:
+                try:
+                    out[keymap[parts[0]]] = (int(parts[1]) & 255,
+                                             int(parts[2]) & 255,
+                                             int(parts[3]) & 255)
+                except ValueError:
+                    pass
+            elif parts[0] == "SetFontSize" and len(parts) >= 2:
+                try:
+                    out["font"] = max(12, min(45, int(parts[1])))
+                except ValueError:
+                    pass
+        return out
+
+    def describe(self):
+        """Plain-language, one-line description of WHAT the block matches —
+        'Currency: Divine Orb, Exalted Orb · Rarity Rare · Area 65+' — for
+        humans who don't speak filterese."""
+        bits = []
+        for c in self.conditions():
+            parts = c.split()
+            if not parts:
+                continue
+            head, rest = parts[0], " ".join(parts[1:]).replace('"', "")
+            if head == "Class":
+                bits.append(rest.rstrip("s") + "s")
+            elif head == "BaseType":
+                names = [n.strip() for n in rest.split(",") if n.strip()]
+                shown = ", ".join(names[:3]) + ("…" if len(names) > 3 else "")
+                bits.append(shown)
+            elif head == "Rarity":
+                bits.append("Rarity " + rest)
+            elif head in ("ItemLevel", "AreaLevel", "DropLevel", "GemLevel",
+                          "StackSize", "Quality", "WaystoneTier", "MapTier"):
+                label = {"ItemLevel": "ilvl", "AreaLevel": "area",
+                         "DropLevel": "drops at", "GemLevel": "gem lvl",
+                         "StackSize": "stack", "Quality": "quality",
+                         "WaystoneTier": "waystone T", "MapTier": "map T"}[head]
+                bits.append(f"{label} {rest}")
+            elif head in ("Corrupted", "Mirrored", "Identified"):
+                bits.append(head.lower() if rest.lower() in ("true", "1")
+                            else f"not {head.lower()}")
+            elif head in ("Sockets", "LinkedSockets"):
+                bits.append(f"{head.lower()} {rest}")
+        verb = {"Show": "SHOW", "Hide": "HIDE", "Minimal": "MINIMAL"}\
+            .get(self.action, self.action.upper())
+        what = " · ".join(bits) if bits else "everything not matched above"
+        return f"{verb}: {what}"
+
 
 class FilterDocument:
     def __init__(self, pre=None, blocks=None, path=None):

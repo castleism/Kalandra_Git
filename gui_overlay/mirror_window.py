@@ -28,6 +28,7 @@ Backend wiring (all guarded -- the overlay still launches if a dependency is mis
 import sys
 import math
 import os
+import re          # orb-art tolerant filename matching
 import json
 import time
 import threading
@@ -69,7 +70,8 @@ try:
         QComboBox, QGridLayout, QListWidget, QListWidgetItem, QTextEdit,
         QCheckBox
     )
-    from PyQt6.QtCore import Qt, QTimer, QPoint, QPointF, QRectF, QObject, pyqtSignal, QUrl
+    from PyQt6.QtCore import (Qt, QTimer, QPoint, QPointF, QRectF, QObject,
+                              pyqtSignal, QUrl, QEvent)
     from PyQt6.QtGui import (
         QPainter, QColor, QPen, QBrush, QFont, QRadialGradient,
         QLinearGradient, QPixmap, QPainterPath, QDesktopServices
@@ -142,6 +144,35 @@ API_KEY_URLS = {pid: p.get("key_url", "") for pid, p in _AI_PROVIDERS.items() if
 API_KEY_URLS.setdefault("openai", "https://platform.openai.com/api-keys")
 API_KEY_URLS.setdefault("gemini", "https://aistudio.google.com/app/apikey")
 API_KEY_URLS["elevenlabs"] = "https://elevenlabs.io/app/settings/api-keys"
+API_KEY_URLS["github"] = ("https://github.com/settings/tokens/new"
+                          "?scopes=repo&description=Kalandra%20overlay")
+
+# Home/site URLs for every linked service in Settings — powers the
+# "Open site" buttons so each integration is clickable and testable.
+SERVICE_URLS = {
+    "pathofexile":      "https://www.pathofexile.com/my-account",
+    "poeninja":         "https://poe.ninja/poe2/economy",
+    "poe2_forums":      "https://www.pathofexile.com/forum",   # PoE2 sections live here
+    "youtube":          "https://www.youtube.com/results?search_query=path+of+exile+2+builds",
+    "pathofbuilding":   "https://pathofbuilding.community/",
+    "poe_overlay":      "https://github.com/PoE-Overlay-Community/PoE-Overlay-Community-Fork",
+    "neversink":        "https://www.filterblade.xyz/?game=Poe2",
+    "exiled_exchange2": "https://kvan7.github.io/Exiled-Exchange-2/",
+    "craftofexile2":    "https://www.craftofexile.com/?game=poe2",
+    "maxroll":          "https://maxroll.gg/poe2",
+    "mobalytics":       "https://mobalytics.gg/poe-2",
+    "poe2wiki":         "https://www.poe2wiki.net/wiki/Path_of_Exile_2_Wiki",
+}
+
+# Major email providers for the Email (account backup) row. Each entry:
+# (label, sign-in URL, app-password/help URL).
+EMAIL_PROVIDERS = [
+    ("Gmail",       "https://mail.google.com/",      "https://myaccount.google.com/apppasswords"),
+    ("Outlook",     "https://outlook.live.com/",     "https://account.live.com/proofs/AppPassword"),
+    ("Yahoo Mail",  "https://mail.yahoo.com/",       "https://login.yahoo.com/account/security"),
+    ("Proton Mail", "https://mail.proton.me/",       "https://account.proton.me/u/0/mail/imap-smtp"),
+    ("iCloud Mail", "https://www.icloud.com/mail/",  "https://account.apple.com/account/manage"),
+]
 
 
 # ----------------------------------------------------
@@ -234,17 +265,24 @@ class KalandraConsoleLogger:
         i = 0
         while self._hb_active:
             with self._print_lock:
-                print(f"\r\033[96m{self._hb_label}{frames[i % len(frames)]}\033[0m",
-                      end="", flush=True)
+                try:
+                    print(f"\r\033[96m{self._hb_label}{frames[i % len(frames)]}\033[0m",
+                          end="", flush=True)
+                except Exception:
+                    pass  # console gone / redirected — never let this thread die
                 self._hb_on_line = True
             i += 1
             time.sleep(0.4)
 
     def stop_heartbeat(self):
+        # Called from Qt slots — must NEVER raise (PyQt6 would abort the app).
         self._hb_active = False
         with self._print_lock:
             if self._hb_on_line:
-                print("\r" + " " * 64 + "\r", end="", flush=True)
+                try:
+                    print("\r" + " " * 64 + "\r", end="", flush=True)
+                except Exception:
+                    pass
                 self._hb_on_line = False
 
     def dump_transcript_on_exit(self):
@@ -304,10 +342,43 @@ def save_config(cfg):
         pass
 
 
+ORB_ART_DIR = os.path.join("gui_overlay", "assets", "orbs", "2d")
+
+def find_orb_art(slug):
+    """Locate the 2D sprite for a companion-orb slug, tolerantly.
+
+    Exact match is 2d/<slug>.png, but users drop files in with all kinds of
+    names ('Orb_of_Chance.png', 'chance orb.PNG', 'chance-orb.png'...), so we
+    normalize each filename (lowercase, alphanumerics only, strip 'orb'/'of')
+    and match that against the slug. Returns a path or None.
+    """
+    exact = os.path.join(ORB_ART_DIR, f"{slug}.png")
+    if os.path.exists(exact):
+        return exact
+    try:
+        want = re.sub(r"[^a-z]", "", slug.lower())
+        for fn in os.listdir(ORB_ART_DIR):
+            if not fn.lower().endswith(".png"):
+                continue
+            # tolerate numbering, 'orb', 'of', plurals: '9_Chance_Orbs.png' -> 'chance'
+            norm = re.sub(r"[^a-z]", "", fn[:-4].lower())
+            norm = norm.replace("orb", "").replace("of", "").rstrip("s")
+            if norm == want or norm == want.rstrip("s"):
+                return os.path.join(ORB_ART_DIR, fn)
+    except Exception:
+        pass
+    return None
+
+
 # ----------------------------------------------------
 # 2c. THREAD -> UI SIGNAL BRIDGE
 # ----------------------------------------------------
 if PYQT_AVAILABLE:
+    # W3-04/05/06: every window/dialog wears Christian's frame chrome.
+    from gui_overlay.kalandra_window import (KalandraFrameDialog,
+                                             KalandraFrameWindow,
+                                             kinfo, kconfirm)
+
     class WorkerSignals(QObject):
         log = pyqtSignal(str, str)          # category, message
         sync_finished = pyqtSignal(dict)    # stats dict
@@ -331,7 +402,7 @@ if PYQT_AVAILABLE:
 # 2b. TEXT CHAT WINDOW  (double-click the mic medallion)
 # ----------------------------------------------------
 if PYQT_AVAILABLE:
-    class ChatDialog(QDialog):
+    class ChatDialog(KalandraFrameDialog):
         """Type to the same AI brain that the voice channel uses -- same RAG
         knowledge base, same full PoB build context, same live sim numbers --
         just without speaking. A signal bridge keeps worker-thread replies
@@ -340,14 +411,14 @@ if PYQT_AVAILABLE:
         _reply_ready = pyqtSignal(str, str)   # (role, text)
 
         def __init__(self, ask_fn, parent=None, flag_fn=None, open_build_fn=None):
-            super().__init__(parent)
+            super().__init__(f"KALANDRA v{KALANDRA_VERSION} — CHAT WITH THE ORB",
+                             parent)
             self.ask_fn = ask_fn              # overlay.ask_ai_text(text, on_reply)
             self.flag_fn = flag_fn            # overlay._flag_last_answer(q, a, note)
             self.open_build_fn = open_build_fn   # overlay.open_dashboard_build
             self._busy = False
             self._last_q = ""
             self._last_a = ""
-            self.setWindowTitle(f"Kalandra v{KALANDRA_VERSION} — Chat with the Orb")
             self.setMinimumSize(440, 520)
             self.setStyleSheet(
                 "QDialog{background-color:#12151b;}"
@@ -361,7 +432,7 @@ if PYQT_AVAILABLE:
                 "QPushButton:disabled{background-color:#3a3f4a;color:#888;}"
                 "QLabel{color:#9aa0ab;font-size:11px;}")
 
-            lay = QVBoxLayout(self)
+            lay = self.body
             self.transcript = QTextEdit()
             self.transcript.setReadOnly(True)
             lay.addWidget(self.transcript, 1)
@@ -506,7 +577,91 @@ if PYQT_AVAILABLE:
 # 3. SETTINGS / ACCOUNTS DIALOG
 # ----------------------------------------------------
 if PYQT_AVAILABLE:
-    class SettingsDialog(QDialog):
+    class PricePopup(QWidget):
+        """W3-20: the in-game price flyout. PoE2's own Ctrl+C puts the hovered
+        item's text on the clipboard; Kalandra notices, parses it, and floats
+        this card near the cursor — Exiled-Exchange style, but 100%% passive
+        (we read the clipboard the game wrote; we never touch the game)."""
+
+        def __init__(self, info, raw_text, league, on_dashboard=None,
+                     estimate=None):
+            super().__init__(None, Qt.WindowType.FramelessWindowHint
+                             | Qt.WindowType.WindowStaysOnTopHint
+                             | Qt.WindowType.Tool)
+            self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+            self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
+            from gui_overlay import theme as _t
+            rarity = (info.get("rarity") or "").lower()
+            rare_col = {"unique": "#af6025", "rare": "#d9cf8a",
+                        "magic": "#8888ff"}.get(rarity, _t.TEXT)
+            self.setStyleSheet(
+                f"QWidget{{background:{_t.BG1};color:{_t.TEXT};font-size:12px;}}"
+                f"QLabel{{background:transparent;}}"
+                f"QPushButton{{background:{_t.BG2};border:1px solid {_t.GOLD_DARK};"
+                f"border-radius:4px;padding:4px 10px;color:{_t.TEXT};}}"
+                f"QPushButton:hover{{border-color:{_t.GOLD};color:{_t.GOLD_LIGHT};}}")
+            lay = QVBoxLayout(self)
+            lay.setContentsMargins(12, 10, 12, 10)
+            name = info.get("name") or info.get("base") or "Item"
+            head = QLabel(f"<b>{name}</b>")
+            head.setStyleSheet(f"color:{rare_col};font-size:14px;background:transparent;")
+            lay.addWidget(head)
+            sub_bits = [b for b in (info.get("base") if info.get("name") else None,
+                                    info.get("item_class"),
+                                    f"ilvl {info.get('ilvl')}" if info.get("ilvl") else None)
+                        if b]
+            if sub_bits:
+                sub = QLabel(" · ".join(sub_bits))
+                sub.setStyleSheet("color:#9aa4b2;background:transparent;")
+                lay.addWidget(sub)
+            for m in (info.get("mods") or [])[:4]:
+                ml = QLabel("• " + m)
+                ml.setStyleSheet("color:#8fa0c0;background:transparent;")
+                lay.addWidget(ml)
+            est = QLabel(estimate or
+                         "No instant estimate — check live listings ↓")
+            est.setStyleSheet(
+                f"color:{_t.GOLD_LIGHT};font-weight:bold;background:transparent;"
+                if estimate else "color:#7d8694;background:transparent;")
+            lay.addWidget(est)
+            row = QHBoxLayout()
+            tb = QPushButton("Trade ↗")
+            from core_engine.trade_tools import trade_search_url
+            url = trade_search_url(info, league)
+            tb.clicked.connect(lambda: (QDesktopServices.openUrl(QUrl(url)),
+                                        self.close()))
+            row.addWidget(tb)
+            if on_dashboard:
+                db = QPushButton("Price Check tab")
+                db.clicked.connect(lambda: (on_dashboard(raw_text), self.close()))
+                row.addWidget(db)
+            xb = QPushButton("✕")
+            xb.setFixedWidth(28)
+            xb.clicked.connect(self.close)
+            row.addWidget(xb)
+            lay.addLayout(row)
+            # place near the cursor, clamped to the screen
+            try:
+                from PyQt6.QtGui import QCursor
+                pos = QCursor.pos()
+                scr = QApplication.screenAt(pos) or QApplication.primaryScreen()
+                g = scr.availableGeometry()
+                self.adjustSize()
+                x = min(max(pos.x() + 18, g.left()), g.right() - self.width() - 8)
+                y = min(max(pos.y() + 18, g.top()), g.bottom() - self.height() - 8)
+                self.move(x, y)
+            except Exception:
+                pass
+            QTimer.singleShot(12000, self.close)   # auto-dismiss
+
+        def keyPressEvent(self, ev):
+            if ev.key() == Qt.Key.Key_Escape:
+                self.close()
+            else:
+                super().keyPressEvent(ev)
+
+
+    class SettingsDialog(KalandraFrameDialog):
         _voices_loaded = pyqtSignal(list)
         _conn_loaded = pyqtSignal(dict)
 
@@ -515,7 +670,8 @@ if PYQT_AVAILABLE:
                      on_open_deps=None, voices=None, issues=None,
                      orbs=None, current_orb="divine", on_orb_change=None,
                      usage_provider=None, on_dashboard_change=None):
-            super().__init__(parent)
+            super().__init__(f"KALANDRA v{KALANDRA_VERSION} — SETTINGS & ACCOUNTS",
+                             parent)
             self.am = account_manager
             self.config = config
             self.issues = issues
@@ -533,36 +689,24 @@ if PYQT_AVAILABLE:
             self.on_open_dashboard = on_open_dashboard
             self.on_scan_gamedata = on_scan_gamedata
             self.on_open_deps = on_open_deps
-            self.setWindowTitle(f"Kalandra v{KALANDRA_VERSION} — Settings & Accounts")
-            # Min small enough to fit modest screens (the service list scrolls);
-            # actual open size is bounded to the screen below.
-            self.setMinimumSize(560, 460)
-            self.setStyleSheet(
-                "QDialog{background-color:#14181f;color:#e8e8e8;}"
-                "QLabel{color:#e8e8e8;}"
-                "QLineEdit{background:#0c0f14;color:#fff;border:1px solid #3a4150;padding:4px;border-radius:4px;}"
-                "QPushButton{background:#2a3140;color:#fff;border:1px solid #444c5c;padding:5px 10px;border-radius:5px;}"
-                "QPushButton:hover{background:#39424f;}"
-                "QComboBox{background:#0c0f14;color:#fff;padding:4px;border:1px solid #3a4150;}"
-                "QComboBox QAbstractItemView{background:#0c0f14;color:#ffffff;"
-                "selection-background-color:#3a4658;selection-color:#ffffff;"
-                "border:1px solid #4a5468;outline:none;}"
-            )
+            # The frame border eats ~110px of width, so open WIDE (close to
+            # the dashboard) or the bottom button row clips. Bounded to the
+            # screen; the service list scrolls for height.
+            self.setMinimumSize(820, 460)
             self._build_ui()
-            # Open at a height bounded by the screen so the bottom buttons never
-            # clip on shorter displays (the account list scrolls).
             try:
                 scr = QApplication.primaryScreen()
                 avail = scr.availableGeometry() if scr else None
-                h = 760
+                w, h = 1100, 780
                 if avail is not None:
+                    w = min(w, max(820, avail.width() - 120))
                     h = min(h, max(460, avail.height() - 90))
-                self.resize(580, h)
+                self.resize(w, h)
             except Exception:
-                self.resize(580, 700)
+                self.resize(1100, 720)
 
         def _build_ui(self):
-            root = QVBoxLayout(self)
+            root = self.body
 
             title = QLabel("<b>Oracle Setup &amp; Account Linking</b>")
             title.setStyleSheet("font-size:16px;color:#d4a373;")
@@ -615,8 +759,31 @@ if PYQT_AVAILABLE:
             bhint.setStyleSheet("color:#7d8694;font-size:10px;")
             bhint.setWordWrap(True)
             root.addWidget(bhint)
+            # ONE key row for whichever brain is selected above — no more
+            # per-provider rows cluttering the account list.
+            key_row = QHBoxLayout()
+            key_row.addWidget(QLabel("API key:"))
+            self.ai_key_edit = QLineEdit()
+            self.ai_key_edit.setEchoMode(QLineEdit.EchoMode.Password)
+            key_row.addWidget(self.ai_key_edit, 1)
+            ksave = QPushButton("Save")
+            ksave.setProperty("gem", "emerald")
+            ksave.clicked.connect(self._save_ai_key)
+            key_row.addWidget(ksave)
+            kclear = QPushButton("Clear")
+            kclear.setProperty("gem", "ruby")
+            kclear.clicked.connect(self._clear_ai_key)
+            key_row.addWidget(kclear)
+            self.ai_key_btn = QPushButton("Get key ↗")
+            self.ai_key_btn.clicked.connect(self._open_ai_key_page)
+            key_row.addWidget(self.ai_key_btn)
+            root.addLayout(key_row)
+            self.ai_key_status = QLabel("")
+            self.ai_key_status.setStyleSheet("color:#9aa4b2;font-size:10px;")
+            root.addWidget(self.ai_key_status)
             self._reload_models(cur)
             self._refresh_usage_label()
+            self._refresh_ai_key_row()
 
             # --- Crawl speed (parallel fetchers) ---
             speed_row = QHBoxLayout()
@@ -631,7 +798,33 @@ if PYQT_AVAILABLE:
             self.speed_combo.currentTextChanged.connect(self._on_speed_change)
             speed_row.addWidget(self.speed_combo)
             speed_row.addStretch()
+            # W3-20: toggle for the in-game Ctrl+C price flyout.
+            self.popup_check = QCheckBox("Ctrl+C price popup (in game)")
+            self.popup_check.setToolTip(
+                "When you copy an item in game (Ctrl+C over its tooltip), a "
+                "small card pops up with the parsed item, an instant currency "
+                "estimate, and trade-search shortcuts. Purely passive — reads "
+                "the clipboard the game wrote, never touches the game.")
+            self.popup_check.setChecked(bool(self.config.get("price_popup", True)))
+            self.popup_check.stateChanged.connect(self._on_popup_toggle)
+            speed_row.addWidget(self.popup_check)
             root.addLayout(speed_row)
+            # Which tool answers your in-game price checks. Picking an
+            # external tool silences Kalandra's own Ctrl+C popup so the two
+            # never fight over the clipboard.
+            pc_row = QHBoxLayout()
+            pc_row.addWidget(QLabel("Price checker:"))
+            self.pc_combo = QComboBox()
+            for label, pid in (("Kalandra (built-in popup)", "kalandra"),
+                               ("PoE Overlay 2", "poe_overlay2"),
+                               ("Exiled Exchange 2", "exiled_exchange2"),
+                               ("Xiletrade", "xiletrade")):
+                self.pc_combo.addItem(label, pid)
+            i = self.pc_combo.findData(self.config.get("price_checker", "kalandra"))
+            self.pc_combo.setCurrentIndex(i if i >= 0 else 0)
+            self.pc_combo.currentIndexChanged.connect(self._on_pc_change)
+            pc_row.addWidget(self.pc_combo, 1)
+            root.addLayout(pc_row)
 
             # --- Divine Orb voice ---
             voice_row = QHBoxLayout()
@@ -650,18 +843,22 @@ if PYQT_AVAILABLE:
                 orb_row.addWidget(QLabel("Companion orb:"))
                 self.orb_combo = QComboBox()
                 for name, slug in self.orbs:
-                    self.orb_combo.addItem(name, slug)
+                    # Show at a glance which orbs actually have art installed —
+                    # previously picking an art-less orb silently kept showing
+                    # the Divine Orb, which looked like the selector was broken.
+                    has_art = bool(find_orb_art(slug)) or slug == "divine"
+                    self.orb_combo.addItem(name if has_art else f"{name}  (no art yet)", slug)
                 i = self.orb_combo.findData((self.current_orb or "divine").lower())
                 if i >= 0:
                     self.orb_combo.setCurrentIndex(i)
                 self.orb_combo.currentIndexChanged.connect(self._on_orb_change)
                 orb_row.addWidget(self.orb_combo, 1)
                 root.addLayout(orb_row)
-                orb_hint = QLabel("Drop art in gui_overlay/assets/orbs/2d/&lt;slug&gt;.png; "
-                                  "missing art falls back to the Divine Orb.")
-                orb_hint.setStyleSheet("color:#7d8694;font-size:10px;")
-                orb_hint.setWordWrap(True)
-                root.addWidget(orb_hint)
+                self.orb_hint = QLabel("Drop art in gui_overlay/assets/orbs/2d/&lt;slug&gt;.png; "
+                                       "missing art falls back to the Divine Orb.")
+                self.orb_hint.setStyleSheet("color:#7d8694;font-size:10px;")
+                self.orb_hint.setWordWrap(True)
+                root.addWidget(self.orb_hint)
 
             # --- Scrollable service list ---
             scroll = QScrollArea()
@@ -676,7 +873,31 @@ if PYQT_AVAILABLE:
             if self.am:
                 # Build rows WITHOUT hitting the keychain (each read can stall on
                 # Windows; 15 of them froze the overlay and showed a black box).
-                for svc in self.am.list_service_meta():
+                # Grouped: builds, tools, external. AI brains live up top.
+                _AI_IDS = ("openai", "gemini", "anthropic", "deepseek",
+                           "mistral", "xai")
+                _SECTIONS = [
+                    ("⚔ PoE2 Builds", ("pathofexile", "pathofbuilding",
+                                       "maxroll", "mobalytics")),
+                    ("🛠 PoE2 Tools", ("poeninja", "poe2_forums", "poe_overlay",
+                                      "neversink", "exiled_exchange2",
+                                      "craftofexile2", "poe2wiki")),
+                    ("🌐 External accounts", ("email", "youtube", "github",
+                                             "elevenlabs")),
+                ]
+                meta = {s["id"]: s for s in self.am.list_service_meta()
+                        if s["id"] not in _AI_IDS}
+                for title, ids in _SECTIONS:
+                    got = [meta.pop(i) for i in ids if i in meta]
+                    if not got:
+                        continue
+                    hdr = QLabel(f"<b>{title}</b>")
+                    hdr.setStyleSheet("color:#d4a373;font-size:14px;"
+                                      "margin-top:10px;letter-spacing:1px;")
+                    grid.addWidget(hdr)
+                    for svc in got:
+                        grid.addWidget(self._service_row(svc))
+                for svc in meta.values():   # anything new lands at the end
                     grid.addWidget(self._service_row(svc))
                 # Check which accounts are actually connected off the UI thread.
                 threading.Thread(target=self._load_connections, daemon=True).start()
@@ -738,6 +959,7 @@ if PYQT_AVAILABLE:
                 root.addLayout(irow)
 
             close_btn = QPushButton("Done")
+            close_btn.setProperty("gem", "emerald")
             close_btn.clicked.connect(self.accept)
             root.addWidget(close_btn)
 
@@ -769,8 +991,27 @@ if PYQT_AVAILABLE:
                 self.voice_combo.setCurrentIndex(i)
             self.voice_combo.blockSignals(False)
 
+        def _on_pc_change(self, _idx):
+            self.config["price_checker"] = self.pc_combo.currentData() or "kalandra"
+            save_config(self.config)
+
+        def _on_popup_toggle(self, _state):
+            self.config["price_popup"] = self.popup_check.isChecked()
+            save_config(self.config)
+
         def _on_orb_change(self, _idx):
             slug = self.orb_combo.currentData()
+            if slug and hasattr(self, "orb_hint"):
+                if slug != "divine" and not find_orb_art(slug):
+                    self.orb_hint.setText(
+                        f"⚠ No art installed for this orb yet — the overlay will keep "
+                        f"showing the Divine Orb. Add a PNG at "
+                        f"gui_overlay/assets/orbs/2d/{slug}.png (any similar filename "
+                        f"like 'Orb_of_{slug.title()}.png' also works), then re-select it.")
+                    self.orb_hint.setStyleSheet("color:#e0b050;font-size:10px;")
+                else:
+                    self.orb_hint.setText("Art found — the overlay orb updates instantly.")
+                    self.orb_hint.setStyleSheet("color:#7fd6a0;font-size:10px;")
             if self.on_orb_change and slug:
                 try:
                     self.on_orb_change(slug)
@@ -899,8 +1140,10 @@ if PYQT_AVAILABLE:
                 self.fields[svc["id"]] = edit
                 row.addWidget(edit)
                 save = QPushButton("Save")
+                save.setProperty("gem", "emerald")
                 save.clicked.connect(lambda _, s=svc["id"]: self._save_secret(s))
                 clear = QPushButton("Clear")
+                clear.setProperty("gem", "ruby")
                 clear.clicked.connect(lambda _, s=svc["id"]: self._clear_secret(s))
                 row.addWidget(save)
                 row.addWidget(clear)
@@ -912,15 +1155,240 @@ if PYQT_AVAILABLE:
                         lambda _, s=svc["id"]: QDesktopServices.openUrl(QUrl(API_KEY_URLS[s])))
                     lay.addWidget(getkey)
             elif svc["kind"] == "oauth":
-                btn = QPushButton("Connect via OAuth (wiring pending)")
-                btn.setEnabled(False)
-                btn.setToolTip("Official OAuth flow will be wired in a later step.")
-                lay.addWidget(btn)
+                if svc["id"] == "pathofexile":
+                    self._build_ggg_oauth_row(lay)
+                elif svc["id"] == "email":
+                    self._build_email_row(lay)
+                else:
+                    # Generic OAuth service (e.g. YouTube): open its sign-in page.
+                    row = QHBoxLayout()
+                    connect = QPushButton("Open sign-in page")
+                    url = SERVICE_URLS.get(svc["id"], "")
+                    connect.clicked.connect(
+                        lambda _, u=url: QDesktopServices.openUrl(QUrl(u)))
+                    row.addWidget(connect)
+                    row.addStretch()
+                    lay.addLayout(row)
+            elif svc["id"] == "pathofbuilding":
+                # Bundled/installed PoB: point Kalandra at the actual program.
+                row = QHBoxLayout()
+                auto = QPushButton("Auto-detect (bundled)")
+                auto.setProperty("gem", "emerald")
+                auto.clicked.connect(self._pob_autodetect)
+                row.addWidget(auto)
+                pick = QPushButton("Pick PoB .exe…")
+                pick.clicked.connect(self._pob_pick)
+                row.addWidget(pick)
+                site = QPushButton("Website ↗")
+                site.clicked.connect(lambda: QDesktopServices.openUrl(
+                    QUrl(SERVICE_URLS.get("pathofbuilding", ""))))
+                row.addWidget(site)
+                row.addStretch()
+                lay.addLayout(row)
+                self.pob_path_lbl = QLabel(
+                    self.config.get("pob_exe") or "No PoB path set yet.")
+                self.pob_path_lbl.setWordWrap(True)
+                self.pob_path_lbl.setStyleSheet("color:#9aa4b2;font-size:10px;")
+                lay.addWidget(self.pob_path_lbl)
             else:  # link
+                row = QHBoxLayout()
+                url = SERVICE_URLS.get(svc["id"], "")
+                if url:
+                    open_btn = QPushButton("Open site")
+                    open_btn.setToolTip(url)
+                    open_btn.clicked.connect(
+                        lambda _, u=url: QDesktopServices.openUrl(QUrl(u)))
+                    row.addWidget(open_btn)
                 lbl = QLabel("Data-source / tool integration (no login required).")
                 lbl.setStyleSheet("color:#7d8694;font-size:11px;")
-                lay.addWidget(lbl)
+                row.addWidget(lbl, 1)
+                lay.addLayout(row)
             return box
+
+        # -- GGG (pathofexile.com) OAuth ---------------------------------------
+        def _build_ggg_oauth_row(self, lay):
+            row = QHBoxLayout()
+            self.ggg_connect_btn = QPushButton("Connect GGG account (OAuth)")
+            self.ggg_connect_btn.setProperty("gem", "sapphire")
+            self.ggg_connect_btn.setToolTip(
+                "Runs the official OAuth 2.1 PKCE sign-in in your browser.\n"
+                "Needs the client_id GGG issues for Kalandra (see the field →).")
+            self.ggg_connect_btn.clicked.connect(self._start_ggg_oauth)
+            row.addWidget(self.ggg_connect_btn)
+            test_btn = QPushButton("Test PoE2 API (no login)")
+            test_btn.setToolTip("Fetches the public PoE2 league list to prove "
+                                "the API is reachable from your machine.")
+            test_btn.clicked.connect(self._test_ggg_api)
+            row.addWidget(test_btn)
+            row.addStretch()
+            lay.addLayout(row)
+            cid_row = QHBoxLayout()
+            cid_row.addWidget(QLabel("client_id:"))
+            self.ggg_cid_edit = QLineEdit(self.config.get("ggg_client_id", ""))
+            self.ggg_cid_edit.setPlaceholderText(
+                "paste the client_id GGG sends back (GGG_OAuth_Application_Letter.md)")
+            self.ggg_cid_edit.editingFinished.connect(self._save_ggg_cid)
+            cid_row.addWidget(self.ggg_cid_edit, 1)
+            lay.addLayout(cid_row)
+            self.ggg_status = QLabel("")
+            self.ggg_status.setWordWrap(True)
+            self.ggg_status.setStyleSheet("color:#9aa4b2;font-size:11px;")
+            lay.addWidget(self.ggg_status)
+
+        def _save_ggg_cid(self):
+            self.config["ggg_client_id"] = self.ggg_cid_edit.text().strip()
+            save_config(self.config)
+
+        def _start_ggg_oauth(self):
+            self._save_ggg_cid()
+            cid = self.config.get("ggg_client_id", "")
+            if not cid:
+                self.ggg_status.setText(
+                    "⚠ No client_id yet. GGG hands these out per-app: send them "
+                    "GGG_OAuth_Application_Letter.md (repo root) at "
+                    "support@grindinggear.com, then paste the client_id above and "
+                    "click Connect again. Opening their OAuth docs so you can "
+                    "see what the flow will do...")
+                QDesktopServices.openUrl(
+                    QUrl("https://www.pathofexile.com/developer/docs/authorization"))
+                return
+            try:
+                from core_engine.oauth_pkce import run_pkce_flow
+            except Exception as e:
+                self.ggg_status.setText(f"OAuth module failed to load: {e}")
+                return
+            self.ggg_connect_btn.setEnabled(False)
+            self.ggg_status.setText("Waiting for you to approve the sign-in in "
+                                    "your browser (3-minute window)...")
+
+            def _open(url):
+                QDesktopServices.openUrl(QUrl(url))
+
+            def _work():
+                res = run_pkce_flow(cid, _open)
+                def _done():
+                    self.ggg_connect_btn.setEnabled(True)
+                    if res.get("ok"):
+                        tok = res["token"]
+                        if self.am:
+                            self.am.set_secret("pathofexile", json.dumps(tok))
+                        self.ggg_status.setText("🟢 GGG account linked! Token stored "
+                                                "securely in your OS keychain.")
+                    else:
+                        self.ggg_status.setText(f"⚠ OAuth failed: {res.get('error')}")
+                QTimer.singleShot(0, _done)
+            threading.Thread(target=_work, daemon=True).start()
+
+        def _test_ggg_api(self):
+            self.ggg_status.setText("Contacting the PoE2 trade API...")
+            def _work():
+                try:
+                    import requests as _rq
+                    from core_engine.poe_account import TRADE2_LEAGUES_URL, HEADERS
+                    r = _rq.get(TRADE2_LEAGUES_URL, headers=HEADERS, timeout=12)
+                    if r.status_code == 200:
+                        names = [e.get("id") or e.get("text")
+                                 for e in r.json().get("result", [])]
+                        names = [n for n in names if n][:5]
+                        msg = (f"🟢 PoE2 API reachable — current leagues: "
+                               f"{', '.join(names)}" if names else
+                               "⚠ API responded but listed no leagues.")
+                    else:
+                        msg = (f"⚠ API returned HTTP {r.status_code} "
+                               f"(rate-limited or blocked; try again in a minute).")
+                except Exception as e:
+                    msg = f"⚠ Test failed: {e}"
+                QTimer.singleShot(0, lambda: self.ggg_status.setText(msg))
+            threading.Thread(target=_work, daemon=True).start()
+
+        # -- Email provider picker ----------------------------------------------
+        def _build_email_row(self, lay):
+            row = QHBoxLayout()
+            row.addWidget(QLabel("Provider:"))
+            self.email_combo = QComboBox()
+            for label, signin, apppass in EMAIL_PROVIDERS:
+                self.email_combo.addItem(label, (signin, apppass))
+            saved = self.config.get("email_provider", "Gmail")
+            i = self.email_combo.findText(saved)
+            if i >= 0:
+                self.email_combo.setCurrentIndex(i)
+            self.email_combo.currentTextChanged.connect(self._on_email_provider)
+            row.addWidget(self.email_combo, 1)
+            signin_btn = QPushButton("Open sign-in")
+            signin_btn.clicked.connect(lambda: self._open_email_url(0))
+            row.addWidget(signin_btn)
+            app_btn = QPushButton("Get app password")
+            app_btn.setToolTip("Most providers need an app-specific password for "
+                               "third-party tools; this opens that page.")
+            app_btn.clicked.connect(lambda: self._open_email_url(1))
+            row.addWidget(app_btn)
+            lay.addLayout(row)
+            tok_row = QHBoxLayout()
+            self.email_token_edit = QLineEdit()
+            self.email_token_edit.setEchoMode(QLineEdit.EchoMode.Password)
+            self.email_token_edit.setPlaceholderText(
+                "address:app-password (stored in your OS keychain)")
+            tok_row.addWidget(self.email_token_edit, 1)
+            save = QPushButton("Save")
+            save.clicked.connect(self._save_email_token)
+            tok_row.addWidget(save)
+            lay.addLayout(tok_row)
+
+        def _on_email_provider(self, label):
+            self.config["email_provider"] = label
+            save_config(self.config)
+
+        def _open_email_url(self, which):
+            data = self.email_combo.currentData()
+            if data:
+                QDesktopServices.openUrl(QUrl(data[which]))
+
+        def _save_email_token(self):
+            if self.am:
+                ok = self.am.set_secret("email", self.email_token_edit.text().strip())
+                self.email_token_edit.clear()
+                if ok:
+                    QMessageBox.information(self, "Saved", "Email credentials stored.")
+                else:
+                    QMessageBox.warning(self, "Storage disabled",
+                                        "Install keyring (pip install keyring) "
+                                        "for secure storage.")
+
+        def _pob_set(self, exe):
+            self.config["pob_exe"] = exe
+            self.config["pob_install_dir"] = os.path.dirname(exe)
+            if not self.config.get("pob_builds_dir"):
+                for c in (os.path.join(os.path.dirname(exe), "Builds"),
+                          os.path.join(os.path.expanduser("~"), "Documents",
+                                       "Path of Building", "Builds")):
+                    if os.path.isdir(c):
+                        self.config["pob_builds_dir"] = c
+                        break
+            save_config(self.config)
+            self.pob_path_lbl.setText(
+                f"✓ {exe}\nBuilds: {self.config.get('pob_builds_dir') or 'not found yet'}")
+
+        def _pob_autodetect(self):
+            """Find the PoB bundled inside the Kalandra folder (tools/…)."""
+            roots = ["tools", "."]
+            for root in roots:
+                for dirpath, _dn, files in os.walk(root):
+                    if dirpath.count(os.sep) > 4:
+                        continue
+                    for fn in files:
+                        if fn.lower().endswith(".exe") and "building" in fn.lower():
+                            self._pob_set(os.path.abspath(os.path.join(dirpath, fn)))
+                            return
+            self.pob_path_lbl.setText(
+                "No PoB .exe found under tools/ — use 'Pick PoB .exe…' to "
+                "point at it directly.")
+
+        def _pob_pick(self):
+            from PyQt6.QtWidgets import QFileDialog
+            p, _ = QFileDialog.getOpenFileName(self, "Locate Path of Building",
+                                               "", "Programs (*.exe)")
+            if p:
+                self._pob_set(p)
 
         def _save_secret(self, service_id):
             edit = self.fields.get(service_id)
@@ -945,6 +1413,41 @@ if PYQT_AVAILABLE:
             save_config(self.config)
             self._reload_models(pid)
             self._refresh_usage_label()
+            self._refresh_ai_key_row()
+
+        def _refresh_ai_key_row(self):
+            pid = self.brain_combo.currentData() or "openai"
+            label = self.brain_combo.currentText() or pid
+            self.ai_key_edit.clear()
+            self.ai_key_edit.setPlaceholderText(f"Paste your {label} API key")
+            self.ai_key_btn.setEnabled(bool(API_KEY_URLS.get(pid)))
+            def _check():
+                ok = bool(self.am and self.am.is_connected(pid))
+                QTimer.singleShot(0, lambda: self.ai_key_status.setText(
+                    f"🟢 {label}: key saved in your OS keychain." if ok
+                    else f"⚪ {label}: no key saved yet."))
+            threading.Thread(target=_check, daemon=True).start()
+
+        def _save_ai_key(self):
+            pid = self.brain_combo.currentData() or "openai"
+            if self.am and self.am.set_secret(pid, self.ai_key_edit.text().strip()):
+                self.ai_key_status.setText("🟢 Key saved.")
+            else:
+                self.ai_key_status.setText("⚠ Couldn't store the key "
+                                           "(pip install keyring).")
+            self.ai_key_edit.clear()
+
+        def _clear_ai_key(self):
+            pid = self.brain_combo.currentData() or "openai"
+            if self.am:
+                self.am.clear(pid)
+            self.ai_key_status.setText("Key cleared.")
+
+        def _open_ai_key_page(self):
+            pid = self.brain_combo.currentData() or "openai"
+            url = API_KEY_URLS.get(pid)
+            if url:
+                QDesktopServices.openUrl(QUrl(url))
 
         def _reload_models(self, pid):
             prov = (self._providers or {}).get(pid, {})
@@ -1000,7 +1503,7 @@ if PYQT_AVAILABLE:
 
 
 if PYQT_AVAILABLE:
-    class CharacterDialog(QDialog):
+    class CharacterDialog(KalandraFrameDialog):
         """Pull your PoE2 characters (no GGG OAuth) + pick the active league."""
         leagues_ready = pyqtSignal(list)
         chars_ready = pyqtSignal(dict)
@@ -1011,7 +1514,8 @@ if PYQT_AVAILABLE:
         def __init__(self, poe_account, account_manager, config, parent=None,
                      on_select=None, pob_bridge=None, on_load_sim=None,
                      on_load_build_file=None):
-            super().__init__(parent)
+            super().__init__(f"KALANDRA v{KALANDRA_VERSION} — CHARACTERS",
+                             parent)
             self.acc = poe_account
             self.am = account_manager
             self.config = config
@@ -1019,8 +1523,18 @@ if PYQT_AVAILABLE:
             self.pob = pob_bridge
             self.on_load_sim = on_load_sim
             self.on_load_build_file = on_load_build_file
-            self.setWindowTitle(f"Kalandra v{KALANDRA_VERSION} — Characters")
-            self.setMinimumSize(480, 520)
+            # ~30% taller than the old default so the middle buttons breathe
+            # (the frame border eats ~110px of height).
+            self.setMinimumSize(520, 560)
+            try:
+                scr = QApplication.primaryScreen()
+                avail = scr.availableGeometry() if scr else None
+                h = 940
+                if avail is not None:
+                    h = min(h, max(560, avail.height() - 80))
+                self.resize(820, h)
+            except Exception:
+                self.resize(820, 900)
             self.setStyleSheet(
                 "QDialog{background:#14181f;color:#e8e8e8;}QLabel{color:#e8e8e8;}"
                 "QLineEdit,QComboBox{background:#0c0f14;color:#fff;border:1px solid #3a4150;padding:4px;border-radius:4px;}"
@@ -1044,7 +1558,7 @@ if PYQT_AVAILABLE:
             threading.Thread(target=self._sess_worker, daemon=True).start()
 
         def _build_ui(self):
-            root = QVBoxLayout(self)
+            root = self.body
             root.addWidget(QLabel("<b>Path of Exile 2 characters</b>"))
             hint = QLabel("Heads-up: GGG's API now <i>technically</i> supports PoE2 characters "
                           "(<b>GET /character</b> with <b>realm=poe2</b>), but it requires an "
@@ -1599,6 +2113,18 @@ class KalandraOverlayApp(ParentClass):
         self.char_click_timer = QTimer(self)         # char: single=picker, double=PoB tab
         self.char_click_timer.setSingleShot(True)
         self.char_click_timer.timeout.connect(self.execute_delayed_character)
+
+        # W3-20: watch the clipboard for in-game Ctrl+C item copies. Windows
+        # notifies Qt of ALL clipboard changes, so this works while you play
+        # — purely passive, nothing is ever sent to the game.
+        self._last_clip = ""
+        self._clip_ts = 0.0
+        self._price_popup = None
+        self._econ_cache = {"rows": [], "ts": 0.0}
+        try:
+            QApplication.clipboard().dataChanged.connect(self._on_clipboard_item)
+        except Exception:
+            pass
         self._chat = None
 
         # Enumerate TTS voices in the background (slow on Windows SAPI) so the
@@ -2056,16 +2582,19 @@ class KalandraOverlayApp(ParentClass):
             bid = self.check_button_click(event.position().toPoint())
             if bid == "BottomLeft":
                 self.click_timer.stop()
+                self._double_click_fired = True
                 self.toggle_screen_recording()
                 event.accept()
             elif bid == "TopLeft":
                 # Double-click the mic -> open the typed chat instead of listening.
                 self.voice_click_timer.stop()
+                self._double_click_fired = True
                 self.open_chat_window()
                 event.accept()
             elif bid == "TopRight":
                 # Double-click the character selector -> open the dashboard PoB tab.
                 self.char_click_timer.stop()
+                self._double_click_fired = True
                 self.open_dashboard_build()
                 event.accept()
 
@@ -2084,6 +2613,13 @@ class KalandraOverlayApp(ParentClass):
         if event.button() == Qt.MouseButton.LeftButton:
             self.is_dragging = False
             self.left_button_pressed = False
+            # Qt fires Press→Release→DblClick→Release: without this guard the
+            # release AFTER a double-click restarts the single-click timer and
+            # opens BOTH windows.
+            if getattr(self, "_double_click_fired", False):
+                self._double_click_fired = False
+                event.accept()
+                return
             if not self.has_moved:
                 self.trigger_click_action(int(event.position().x()), int(event.position().y()))
             event.accept()
@@ -2146,6 +2682,141 @@ class KalandraOverlayApp(ParentClass):
         self.select_active_character()
 
     # ------------------------------------------------
+    # MENU MANAGER — one menu at a time; the overlay steps aside while a
+    # menu is open and reappears when the last one closes.
+    # ------------------------------------------------
+    def _present_menu(self, win, modal=False):
+        prev = getattr(self, "_open_menu", None)
+        if prev is not None and prev is not win:
+            try:
+                prev.close()          # only one menu open at a time
+            except Exception:
+                pass
+        self._open_menu = win
+        try:
+            win.installEventFilter(self)   # watch for it closing/hiding
+        except Exception:
+            pass
+        if self.isVisible():
+            logger.log_event("SYSTEM", "Overlay stepping aside while the menu is open.")
+            self.hide()
+        if modal:
+            try:
+                win.exec()
+            finally:
+                self._menu_done(win)
+        else:
+            win.show()
+            win.raise_()
+            win.activateWindow()
+
+    def _menu_done(self, win):
+        if getattr(self, "_open_menu", None) is win:
+            self._open_menu = None
+        if getattr(self, "_open_menu", None) is None and not self.isVisible():
+            self.show()
+            self.raise_()
+
+    def eventFilter(self, obj, ev):
+        try:
+            if obj is getattr(self, "_open_menu", None) and ev.type() in (
+                    QEvent.Type.Close, QEvent.Type.Hide):
+                # Defer: on Close the window is mid-teardown; on Hide another
+                # menu may be about to claim the slot.
+                QTimer.singleShot(0, lambda o=obj: self._menu_done(o))
+        except Exception:
+            pass
+        return super().eventFilter(obj, ev)
+
+    # ------------------------------------------------
+    # W3-20: CLIPBOARD PRICE POPUP
+    # ------------------------------------------------
+    def _on_clipboard_item(self):
+        if not bool(self.config.get("price_popup", True)):
+            return
+        # An external tool owns price checking? Then it owns Ctrl+C too.
+        if self.config.get("price_checker", "kalandra") != "kalandra":
+            return
+        try:
+            txt = QApplication.clipboard().text() or ""
+        except Exception:
+            return
+        now = time.time()
+        if (not txt or txt == self._last_clip or len(txt) > 4000
+                or (now - self._clip_ts) < 0.8):
+            return
+        if "Rarity:" not in txt and "Item Class:" not in txt:
+            return                      # not a PoE item copy
+        self._last_clip = txt
+        self._clip_ts = now
+        try:
+            from core_engine.trade_tools import parse_item_text
+            info = parse_item_text(txt)
+        except Exception:
+            return
+        if not (info.get("name") or info.get("base")):
+            return
+        logger.log_event("TRADE", f"Item copied in game: "
+                         f"{info.get('name') or info.get('base')}")
+        self._show_price_popup(info, txt)
+
+    def _econ_rows(self):
+        """Cached poe.ninja rows for instant currency estimates (6h TTL).
+        Prefers whatever the Exchange tab already fetched."""
+        try:
+            from gui_overlay import dashboard as _dash
+            if _dash.LAST_ECON_ROWS:
+                return _dash.LAST_ECON_ROWS
+        except Exception:
+            pass
+        if time.time() - self._econ_cache["ts"] < 6 * 3600:
+            return self._econ_cache["rows"]
+        return []   # fetched lazily by _refresh_econ_cache
+
+    def _refresh_econ_cache(self):
+        def _work():
+            try:
+                if self.poe_ninja and self.poe_ninja.available:
+                    rows = self.poe_ninja.get_currency(
+                        self.config.get("league", "Standard")) or []
+                    if rows:
+                        self._econ_cache = {"rows": rows, "ts": time.time()}
+            except Exception:
+                pass
+        threading.Thread(target=_work, daemon=True).start()
+
+    def _show_price_popup(self, info, raw_text):
+        est_text = None
+        rows = self._econ_rows()
+        if not rows:
+            self._refresh_econ_cache()   # ready for the NEXT copy
+        else:
+            try:
+                from core_engine.trade_tools import estimate_value
+                est = estimate_value(info, rows)
+                if est:
+                    est_text = est[1]
+            except Exception:
+                pass
+
+        def _to_dashboard(text):
+            d = self.open_dashboard()
+            if d is not None:
+                try:
+                    d.prefill_price_check(text)
+                except Exception:
+                    pass
+        try:
+            if self._price_popup is not None:
+                self._price_popup.close()
+        except Exception:
+            pass
+        self._price_popup = PricePopup(
+            info, raw_text, self.config.get("league", "Standard"),
+            on_dashboard=_to_dashboard, estimate=est_text)
+        self._price_popup.show()
+
+    # ------------------------------------------------
     # SIGNAL SLOTS (run on UI thread)
     # ------------------------------------------------
     def _set_sync_state(self, active):
@@ -2158,8 +2829,6 @@ class KalandraOverlayApp(ParentClass):
         self.sync_active = False
         logger.stop_heartbeat()
         self.update()
-        msg = QMessageBox(self)
-        msg.setWindowTitle("Kalandra Database Sync")
         pending = stats.get("pending", 0)
         done_note = ("Whole site covered ✅" if pending == 0
                      else f"<b>{pending}</b> pages still pending — click sync again to continue.")
@@ -2167,16 +2836,15 @@ class KalandraOverlayApp(ParentClass):
         if stats.get("rate_per_min"):
             speed = (f"Crawl speed: <b>{stats['rate_per_min']}</b> pages/min "
                      f"over <b>{stats.get('elapsed_min', '?')}</b> min<br>")
-        msg.setText("<b>Database sync finished.</b>")
-        msg.setInformativeText(
+        self._info("Kalandra Database Sync",
+            "<b>Database sync finished.</b><br><br>"
             f"Total entries in knowledge base: <b>{stats.get('ledger_rows', '?')}</b><br>"
             f"Pages crawled (all time): <b>{stats.get('pages_done', '?')}</b><br>"
             f"New this run: <b>{stats.get('new_this_run', '?')}</b><br>"
+            f"Refreshed (re-checked content): <b>{stats.get('updated_this_run', 0)}</b><br>"
             f"{speed}"
             f"{done_note}<br><br>"
             f"Database file: <i>data_engine/localized_knowledge.db</i>")
-        msg.setStyleSheet("background-color:#1a1e24;color:#fff;")
-        msg.exec()
 
     def _on_voice_result(self, transcript, reply):
         self.voice_active = False
@@ -2201,14 +2869,10 @@ class KalandraOverlayApp(ParentClass):
         self.update()
         v = result.get("video")
         t = result.get("transcript")
-        msg = QMessageBox(self)
-        msg.setWindowTitle("Recording Saved")
-        msg.setText("<b>Screen recording saved.</b>")
-        msg.setInformativeText(
-            f"Video: <i>{v or 'failed'}</i><br>"
-            f"Transcription: {'saved' if t else 'no audio captured'}")
-        msg.setStyleSheet("background-color:#1a1e24;color:#fff;")
-        msg.exec()
+        self._info("Recording Saved",
+                   "<b>Screen recording saved.</b><br><br>"
+                   f"Video: <i>{v or 'failed'}</i><br>"
+                   f"Transcription: {'saved' if t else 'no audio captured'}")
 
     # ------------------------------------------------
     # BUTTON CALLBACKS
@@ -2621,18 +3285,14 @@ class KalandraOverlayApp(ParentClass):
         existing = getattr(self, "_chat", None)
         if existing is not None:
             try:
-                existing.show()
-                existing.raise_()
-                existing.activateWindow()
+                self._present_menu(existing)
                 return
             except Exception:
                 self._chat = None
         self._chat = ChatDialog(self.ask_ai_text, parent=self,
                                 flag_fn=self._flag_last_answer,
                                 open_build_fn=self.open_dashboard_build)
-        self._chat.show()
-        self._chat.raise_()
-        self._chat.activateWindow()
+        self._present_menu(self._chat)
         logger.log_event("CHAT", "Text chat window opened (double-click the ruby).")
 
     def _voice_worker(self):
@@ -2729,12 +3389,23 @@ class KalandraOverlayApp(ParentClass):
 
             # poe2db (primary) -- concurrent, resumable, cancelable.
             total_new = 0
+            total_updated = 0
             if _on("poe2db", True):
+                # Content-freshness pass: roll the oldest previously-crawled
+                # pages back into the queue so every sync genuinely re-checks
+                # poe2db (pages change after patches; without this, a "sync"
+                # after full site coverage made zero HTTP requests).
+                try:
+                    scraper.requeue_stale(days=int(self.config.get("recheck_days", 7)),
+                                          cap=int(self.config.get("recheck_cap", 2000)))
+                except Exception:
+                    pass
                 concurrency = int(self.config.get("crawl_concurrency", 10))
                 max_pages = int(self.config.get("crawl_max_pages", 80000))
                 result = scraper.crawl(max_pages=max_pages, concurrency=concurrency,
                                        stop_flag=self._sync_stop)
                 total_new = result["stored"]
+                total_updated = result.get("updated", 0)
             else:
                 log("DATABASE", "poe2db disabled in your source settings; skipping.")
 
@@ -2759,7 +3430,17 @@ class KalandraOverlayApp(ParentClass):
 
             stats = scraper.stats()
             stats["new_this_run"] = total_new + wiki_new + econ_new
-            stats["pending"] = scraper.pending_count()
+            stats["updated_this_run"] = total_updated
+            # Count BOTH 'queued' (poe2db frontier) and 'error' (wiki pages that
+            # failed, usually Cloudflare throttling) — previously only 'queued'
+            # was counted, so the dialog said "whole site covered" while
+            # thousands of wiki pages were still missing.
+            try:
+                wdb.cursor.execute(
+                    "SELECT COUNT(*) FROM crawl_state WHERE status IN ('queued','error')")
+                stats["pending"] = wdb.cursor.fetchone()[0]
+            except Exception:
+                stats["pending"] = scraper.pending_count()
             self.signals.sync_finished.emit(stats)
         except Exception as e:
             self.signals.log.emit("DATABASE", f"Crawl error: {e}")
@@ -3052,7 +3733,7 @@ class KalandraOverlayApp(ParentClass):
                                   pob_bridge=self.pob_bridge,
                                   on_load_sim=self.load_build_into_sim,
                                   on_load_build_file=self.load_build_from_file)
-            dlg.exec()
+            self._present_menu(dlg, modal=True)
         except Exception as e:
             self._info("Character dialog error", str(e))
 
@@ -3076,8 +3757,10 @@ class KalandraOverlayApp(ParentClass):
         assets/orbs/2d/<slug>.png, then the bundled divine_orb.png, then leaves
         it None (procedural orb)."""
         slug = (self.config.get("companion_orb", "divine") or "divine").lower()
-        candidates = [
-            os.path.join(self.assets_dir, "orbs", "2d", f"{slug}.png"),
+        # Tolerant lookup first (accepts 'Orb_of_Chance.png' etc.), then the
+        # bundled Divine Orb as the fallback.
+        art = find_orb_art(slug)
+        candidates = ([art] if art else []) + [
             os.path.join(self.assets_dir, "divine_orb.png"),
         ]
         self.orb_pixmap = None
@@ -3086,6 +3769,10 @@ class KalandraOverlayApp(ParentClass):
                 pm = QPixmap(p)
                 if not pm.isNull():
                     self.orb_pixmap = pm
+                    if p != art and slug != "divine":
+                        logger.log_event("SYSTEM",
+                            f"No art found for companion orb '{slug}' "
+                            f"(expected {ORB_ART_DIR}/{slug}.png) — showing Divine Orb.")
                     break
         # New art -> drop any cached scaled copies (guard: called before
         # __init__ finishes creating the cache on first run).
@@ -3116,6 +3803,9 @@ class KalandraOverlayApp(ParentClass):
             "character": self.active_character if self.active_character != "None" else None,
             "summary": self.current_build_summary or "",
             "scaling": {}, "guidance": "", "jewels": [], "sim": "",
+            # Structured parse for the dashboard's Container view (W3-10):
+            # class/ascendancy/level, stats{}, items[], skills[], main skill.
+            "full": full,
         }
         # Live LuaJIT-sim numbers, if the engine is up and a build is loaded.
         if self.current_sim_stats and self.pob_sim:
@@ -3142,10 +3832,10 @@ class KalandraOverlayApp(ParentClass):
             if getattr(self, "_dashboard", None) is None:
                 self._dashboard = KalandraDashboard(
                     config=self.config, pob_sim=self.pob_sim, accounts=self.accounts,
-                    issues=self.issues, build_provider=self.current_build_view)
-            self._dashboard.show()
-            self._dashboard.raise_()
-            self._dashboard.activateWindow()
+                    issues=self.issues, build_provider=self.current_build_view,
+                    ask_ai=self.ask_ai_text,
+                    on_build_saved=self.load_build_from_file)
+            self._present_menu(self._dashboard)
             return self._dashboard
         except Exception as e:
             self._info("Dashboard error", str(e))
@@ -3157,15 +3847,21 @@ class KalandraOverlayApp(ParentClass):
         d = getattr(self, "_dashboard", None)
         if d is None:
             return
-        was_visible = d.isVisible()
+        try:
+            d.removeEventFilter(self)
+        except Exception:
+            pass
         try:
             d.close()
             d.deleteLater()
         except Exception:
             pass
+        if getattr(self, "_open_menu", None) is d:
+            self._open_menu = None
         self._dashboard = None
-        if was_visible:
-            self.open_dashboard()
+        # Deliberately NOT reopened here: it rebuilds fresh (with the new tab
+        # set) the next time it's summoned. Auto-reopening would close the
+        # Settings menu mid-toggle under the one-menu-at-a-time rule.
 
     def open_dashboard_build(self):
         """Open the dashboard focused on the Build (PoB) tab for the active
@@ -3214,7 +3910,7 @@ class KalandraOverlayApp(ParentClass):
                 return res
             dlg = DependenciesDialog(self.config, save_config, self, oodle_self_test=_oodle_test,
                                      on_extract_gamedata=_extract)
-            dlg.exec()
+            self._present_menu(dlg, modal=True)
         except Exception as e:
             self._info("Setup error", str(e))
 
@@ -3345,16 +4041,24 @@ class KalandraOverlayApp(ParentClass):
         if not self.recording_active:
             # One-time, clear consent before we ever capture the screen/mic.
             if not self.recording_consent_given:
-                box = QMessageBox(self)
-                box.setWindowTitle("Screen Recording — Consent")
-                box.setText("<b>Start recording your screen?</b>")
-                box.setInformativeText(
-                    "This captures your primary monitor (and your microphone, if available) "
-                    "to a local file in data_engine/clips. Nothing is uploaded. A red “● REC” "
-                    "indicator shows while recording. Continue?")
-                box.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
-                box.setStyleSheet("background-color:#1a1e24;color:#fff;")
-                if box.exec() != QMessageBox.StandardButton.Yes:
+                agreed = False
+                try:
+                    agreed = kconfirm(
+                        self, "SCREEN RECORDING — CONSENT",
+                        "<b>Start recording your screen?</b><br><br>"
+                        "This captures your primary monitor (and your microphone, "
+                        "if available) to a local file in data_engine/clips. "
+                        "Nothing is uploaded. A red “● REC” indicator shows while "
+                        "recording.", "Start recording", "Cancel")
+                except Exception:
+                    box = QMessageBox(self)
+                    box.setWindowTitle("Screen Recording — Consent")
+                    box.setText("<b>Start recording your screen?</b>")
+                    box.setStandardButtons(QMessageBox.StandardButton.Yes
+                                           | QMessageBox.StandardButton.No)
+                    box.setStyleSheet("background-color:#1a1e24;color:#fff;")
+                    agreed = box.exec() == QMessageBox.StandardButton.Yes
+                if not agreed:
                     return
                 self.recording_consent_given = True
             if self.recorder.start():
@@ -3402,7 +4106,7 @@ class KalandraOverlayApp(ParentClass):
                                  on_orb_change=self._apply_companion_orb,
                                  usage_provider=self.ai_usage_summary,
                                  on_dashboard_change=self._rebuild_dashboard_tabs)
-            dlg.exec()
+            self._present_menu(dlg, modal=True)
             # Re-init voice with possibly-changed brain/key/model.
             if VoiceEngine and self.accounts:
                 self.voice = VoiceEngine(
@@ -3422,11 +4126,14 @@ class KalandraOverlayApp(ParentClass):
 
     # ------------------------------------------------
     def _info(self, title, text):
-        msg = QMessageBox(self)
-        msg.setWindowTitle(title)
-        msg.setText(text)
-        msg.setStyleSheet("background-color:#1a1e24;color:#fff;")
-        msg.exec()
+        try:
+            kinfo(self, title.upper(), text)
+        except Exception:
+            msg = QMessageBox(self)
+            msg.setWindowTitle(title)
+            msg.setText(text)
+            msg.setStyleSheet("background-color:#1a1e24;color:#fff;")
+            msg.exec()
 
     def closeEvent(self, event):
         logger.log_event("SYSTEM", "Closing application. Bundling session log data.")
@@ -3510,12 +4217,4 @@ if __name__ == "__main__":
             sys.exit(exit_code)
         except Exception:
             print("\n=========================================================")
-            print("         CRITICAL RUNTIME EXCEPTION CAUGHT")
-            print("=========================================================")
-            traceback.print_exc()
-            input()
-            sys.exit(1)
-    else:
-        print(f"FATAL ImportError: {IMPORT_ERROR_MSG}")
-        input()
-        sys.exit(1)
+           

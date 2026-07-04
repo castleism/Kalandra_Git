@@ -1,2 +1,0 @@
-- Have it so the orb is constantly looking in the direction of the mouse pointer. 
-- Find good voices for each
