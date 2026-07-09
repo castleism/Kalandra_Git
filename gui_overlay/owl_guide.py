@@ -48,6 +48,16 @@ WELCOME_TIPS = [
 ]
 
 OWL_TIPS = {
+    "Death Review": [
+        "Every death lands here automatically: the moment the game log "
+        "says you were slain, I ask OBS to rewind its replay buffer into "
+        "a clip — the killer is already on film.",
+        "The audit under the clip reads your CURRENT Path of Building "
+        "numbers and lists the holes: uncapped resistances, negative "
+        "chaos res, a pool too thin for your level.",
+        "Press the AI autopsy button and I will connect what is on "
+        "screen to the fixes — cheapest, highest-impact repairs first.",
+    ],
     "Companion": [
         "This is our fireside — every chat with the Orb lives here as a "
         "thread, and everything Kalandra does shows up as color-coded notes "

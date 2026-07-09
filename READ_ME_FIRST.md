@@ -363,6 +363,11 @@ section is the honest ledger of what's OPEN.
 
 ### Checks on Christian's side
 
+- [ ] Death Review (new): `pip install websocket-client`; in OBS enable
+      Tools ▸ WebSocket Server Settings and Settings ▸ Output ▸ Replay
+      Buffer (start it); enter the websocket password in the Death Review
+      tab and hit "Test + save" (expect 🟢). Then die once for science —
+      the incident + clip should appear in the tab.
 - [ ] Restart Kalandra; confirm: selector opens, its status line's folder
       matches PoB's Settings.xml buildPath, and the list matches PoB.
 - [ ] "Open in PoB app" launches without freezing the overlay.

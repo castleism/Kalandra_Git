@@ -425,6 +425,7 @@ if PYQT_AVAILABLE:
         mouth = pyqtSignal(float)           # 0..1 mouth-open level (lip-sync)
         viseme = pyqtSignal(str)            # current mouth shape (Rhubarb A..H/X)
         speaking = pyqtSignal(bool)         # orb is talking
+        death_captured = pyqtSignal(dict)   # W4-21: incident record saved
         subtitle = pyqtSignal(str)          # the orb's reply text (subtitles)
         sync_progress = pyqtSignal(float)   # current crawl rate (pages/min)
         sync_needed = pyqtSignal(bool)      # startup found data is out of date
@@ -2317,8 +2318,10 @@ class KalandraOverlayApp(ParentClass):
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint |
             Qt.WindowType.WindowStaysOnTopHint |
+            # .Window, NOT .Tool: Windows hides Tool windows from the
+            # taskbar + Alt-Tab, which made Kalandra look "not running".
             Qt.WindowType.NoDropShadowWindowHint |
-            Qt.WindowType.Tool
+            Qt.WindowType.Window
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
@@ -2427,6 +2430,7 @@ class KalandraOverlayApp(ParentClass):
         self.signals.record_finished.connect(self._on_record_finished)
         self.signals.export_finished.connect(self._on_export_finished)
         self.signals.chars_finished.connect(self._on_chars_finished)
+        self.signals.death_captured.connect(self._on_death_captured)
         self.signals.mouth.connect(self._set_mouth)
         self.signals.viseme.connect(self._set_viseme)
         self.signals.speaking.connect(self._set_talking)
@@ -2522,6 +2526,15 @@ class KalandraOverlayApp(ParentClass):
         self.game_watch_timer = QTimer(self)
         self.game_watch_timer.timeout.connect(self._poll_game_state)
         self.game_watch_timer.start(150)
+
+        # W4-21 death review: tail Client.txt while the game runs; a death
+        # line flushes OBS's replay buffer into a clip (core_engine/
+        # death_review). 1s poll, near-zero cost when the game is closed.
+        self._death_watcher = None
+        self._death_log_retry = 0.0
+        self.death_watch_timer = QTimer(self)
+        self.death_watch_timer.timeout.connect(self._death_tick)
+        self.death_watch_timer.start(1000)
 
         logger.log_event("SYSTEM", "PyQt6 Transparent QWidget window initialized.")
 
@@ -2746,6 +2759,46 @@ class KalandraOverlayApp(ParentClass):
             return (self.opacity_multiplier * fade,
                     self.opacity_multiplier * 0.92)
         return self.opacity_multiplier, self.opacity_multiplier
+
+    def _death_tick(self):
+        """1s poll (W4-21): while the game runs, tail Client.txt; the
+        moment a death line lands, capture the OBS replay + context on a
+        worker thread. Results come back via signals.death_captured."""
+        if not self.game_mode:
+            return
+        try:
+            from core_engine import death_review as dr
+            if self._death_watcher is None:
+                now = time.time()
+                if now < self._death_log_retry:
+                    return
+                p = dr.find_client_log(self.config)
+                if not p:
+                    self._death_log_retry = now + 120  # retry quietly later
+                    return
+                self._death_watcher = dr.ClientLogWatcher(p)
+                self.signals.log.emit("DEATH",
+                                      f"Death watch armed — tailing {p}")
+            for ev in self._death_watcher.poll():
+                if ev.get("kind") == "death" and ev.get("who") == "you":
+                    ctx = list(self._death_watcher.recent)
+                    cfg = dict(self.config)
+
+                    def _work(ev=ev, ctx=ctx, cfg=cfg):
+                        rec = dr.capture_death(ev, ctx, cfg)
+                        self.signals.death_captured.emit(rec)
+
+                    threading.Thread(target=_work, daemon=True).start()
+        except Exception:
+            pass                     # the watcher must never hurt the overlay
+
+    def _on_death_captured(self, rec):
+        got = ("clip saved" if rec.get("clip")
+               else f"no clip — {str(rec.get('clip_note', ''))[:90]}")
+        self.signals.log.emit(
+            "DEATH", f"Death in {rec.get('zone', '?')} captured ({got}). "
+                     f"Open the dashboard's Death Review tab for the "
+                     f"autopsy.")
 
     # ------------------------------------------------
     # PAINT

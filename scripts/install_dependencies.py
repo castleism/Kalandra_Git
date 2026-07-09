@@ -41,7 +41,7 @@ import zipfile
 import subprocess
 import urllib.request
 
-ROOT = os.path.dirname(os.path.abspath(__file__))
+ROOT = _ROOT   # repo root (this file lives in scripts/ since the reorg)
 TOOLS = os.path.join(ROOT, "tools")
 APPS = os.path.join(TOOLS, "apps")
 INSTALLERS = os.path.join(TOOLS, "installers")

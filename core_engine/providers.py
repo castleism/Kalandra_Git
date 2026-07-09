@@ -228,6 +228,30 @@ class BuiltinCapture(CaptureProvider):
 # Registry
 # ---------------------------------------------------------------------------
 
+class ObsCapture(CaptureProvider):
+    """OBS Studio via obs-websocket v5 (core_engine/obs_bridge) — the
+    W4-10/W4-21 capture path. Swap in with set_provider("capture", ...)."""
+
+    def __init__(self, host="127.0.0.1", port=4455, password=None):
+        self._kw = {"host": host, "port": port, "password": password}
+
+    def is_recording(self):
+        try:
+            from core_engine.obs_bridge import ObsClient
+            with ObsClient(**self._kw) as c:
+                return c.replay_buffer_active()
+        except Exception:
+            return False
+
+    def save_replay(self):
+        """-> (clip_path|None, msg): flush the replay buffer."""
+        try:
+            from core_engine.obs_bridge import capture_replay
+            return capture_replay(**self._kw)
+        except Exception as e:
+            return None, str(e)
+
+
 _REGISTRY = {}
 _DEFAULTS = {
     "build_calculator": PobCalculator,

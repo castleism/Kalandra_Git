@@ -9,6 +9,128 @@ Repo: https://github.com/castleism/Kalandra_Git
 
 ## [Unreleased]
 
+### Added — 2026-07-05 Death Review (W4-21, first slice of the W4-10 OBS suite)
+- **"Why did I die?"** — PoE2's log never says what hit you, so Kalandra
+  assembles the answer: the overlay tails `Client.txt` while the game runs
+  (1s poll, armed only when the game process is foreground), and the moment
+  a death line lands it asks OBS over obs-websocket v5 to flush its
+  **replay buffer** — rewinding the last N seconds into a clip that's saved
+  with the incident (zone + the log events just before). The clip is a
+  normal video file, ready to post; it never touches any full-session
+  recording OBS is making.
+- **Death Review tab** (⚔ Build Planning) — pick an incident, scrub the
+  final seconds frame by frame, read the defensive audit, press 🦉 AI
+  autopsy for the plain-words verdict (likely killer archetype + three
+  fixes ordered by impact-per-cost). OBS connection row lives in the tab
+  (password goes to the OS keychain, never config.json).
+- **Evidence-only defensive audit** (`death_review.defensive_audit`) — reads
+  the ACTIVE PoB build's own numbers and only speaks about stats PoB
+  actually provided: uncapped/negative resistances (with the real
+  damage-taken math), thin pool for level, sub-5k eHP, no mitigation
+  layer, token block, one-shot windows from max-hit stats.
+- **OBS as a swappable provider** — `core_engine/obs_bridge.py` (minimal
+  obs-websocket v5 client: auth challenge, replay-buffer start/save,
+  stale-clip guard) registered as an `ObsCapture` CaptureProvider, so an
+  official capture API can replace it without touching the feature.
+- `tests/death_checks.py` — 42 checks (log parsing, tailer rotation
+  survival, every audit rule + junk-proofing, incident round-trip,
+  reports, OBS fail-soft), all green. New dep: `websocket-client`.
+
+### Fixed — 2026-07-05 character selector blind to PoB's builds
+- The uninstall test wiped config's PoB pointers, and the PoB copy is
+  portable-style (Settings.xml + Builds INSIDE its folder, not %APPDATA%) —
+  after the uninstaller's "Move out" put it in `%LOCALAPPDATA%\Programs`,
+  no fallback the scanner knew covered that spot. `pob_bridge` now also
+  checks the Move-out target and the standard `Program Files (x86)` install
+  for both the portable `Settings.xml` (authoritative buildPath) and a
+  `Builds` folder — verified in sandbox: a portable PoB there is found with
+  ZERO config. Running the installer's Verify All (or Check Location on the
+  PoB row) re-saves `pob_app_dir`/`pob_exe`/`pob_install_dir` properly.
+
+### Fixed — 2026-07-05 "failed to start embedded python interpreter"
+- The release zip's anti-inception rule (never pack `*.zip`) was eating an
+  innocent bystander: PyInstaller onedir exes carry a critical file
+  literally named `_internal\base_library.zip`. Every unzipped package's
+  `Kalandra-Setup.exe` therefore died at boot with *failed to start
+  embedded python interpreter*. The wizard exe folder is now packed
+  VERBATIM (no extension filtering, key-scan skips our own binaries), and
+  a sandbox-built zip was verified to carry the file. Root `Setup.bat` now
+  prefers the wizard exe when present and falls back to the PowerShell
+  installer. Reminder that also produces this error: the exe must run from
+  its own folder — moving `Kalandra-Setup.exe` away from `_internal\`
+  breaks it by design (onedir).
+
+### Changed — 2026-07-05 installer: hands-off installs + bundled database
+- **No more terminals to babysit** — Install buttons used to open `cmd /k`
+  windows that sat there needing interaction and closing. Installs now run
+  HIDDEN in the background: output streams live into the installer's own
+  log box, the button disables while running, and when the command finishes
+  the component **re-checks itself** and flips its status green — the only
+  clicking left is starting each install. (Third-party GUI installers like
+  PoB's still open their own window — that's theirs, not a terminal.)
+  winget's Python install got `--silent --accept-*` so it asks nothing.
+- **The latest database ships in the package** — `make_release_zip.py` now
+  bundles the freshest `localized_knowledge.db` it can find (data_engine,
+  Additional Resources, or the uninstaller's Documents\Kalandra-Data
+  keep-spot) into `Additional Resources\Database\` inside the zip, with
+  its scrape caches; it's public scraped game data, so the secret scan
+  skips it knowingly. The installer **auto-imports** it on a fresh install
+  (no popup), so first launch already knows the game — no waiting on a
+  first scrape.
+- **"Use existing DB..." button** — point the installer at a database you
+  already have (the file picker opens in Documents\Kalandra-Data, where the
+  uninstaller preserves yours) and it copies it plus its scrape caches into
+  `data_engine\`. Bundled import and the picker share one code path
+  (`Import-DBFrom`), and the freshness line updates immediately.
+
+### Fixed — 2026-07-04 late round (install honesty + taskbar presence)
+- **Installer falsely reported Python/packages installed** — `Find-Python`
+  trusted any answering `python`/`py` command; Windows ships a fake
+  `python.exe` (Microsoft Store redirector stub) on every machine, and the
+  package check matched a bare `"OK"` against arbitrary output. Checks are now
+  evidence-based: the Store stub is rejected outright, a pass requires a real
+  `Python 3.x` version string plus the interpreter's true `sys.executable`
+  path, both shown in the status line — and the package check requires a
+  unique `KALANDRA-PKGS-OK` sentinel printed alongside the interpreter that
+  imported them. A leftover *other* Python on the machine now shows its path,
+  so "installed" is verifiable instead of taken on faith.
+- **Uninstaller now proves machine-level removal happened** — new stub-proof
+  `Resolve-Python`; the credential/pip steps are skipped honestly (with a
+  message) instead of running against the Store stub as silent no-ops; the
+  winget Python removal checks its exit code, offers to delete the
+  `Python312\` leftovers the MSI leaves behind (the very files that make the
+  next install check look "already installed"), and re-detects afterwards,
+  reporting either "Python no longer detectable" or the path of whatever
+  Python remains.
+- **Dependencies installed into `scripts\tools` instead of `tools\`** — a
+  root-reorg straggler: `install_dependencies.py` gained the repo-root shim
+  when it moved into `scripts\`, but its own `ROOT` still pointed at the
+  scripts folder. Tools (~1 GB of LuaJIT + Rhubarb) landed in
+  `scripts\tools\`, and worse, their paths were saved to a shadow
+  `scripts\data_engine\config.json` the app never reads. Fixed `ROOT`
+  (and the same bug in `make_update_zip.py`), moved the downloaded tools to
+  `tools\`, and wrote their corrected paths into the real
+  `data_engine\config.json`.
+- **Installer showed "Detected" for things that aren't there** — the startup
+  row check only tested that a *folder* existed, so an empty `tools\` (left
+  behind by an uninstall) lit "Path of Building 2 source" green. Detection is
+  now verified: a row only shows "Detected" when the file the component
+  actually needs (`Path of Building-PoE2.exe`, `rhubarb.exe`, ...) is found —
+  saved config location first, then default paths. Verify All also stops
+  trusting stale saved paths and falls through to real detection.
+- **"PoB 2 source" and "PoB 2 app" merged into one component** — they were
+  the same project twice (the app download ships its full Lua source,
+  including `HeadlessWrapper.lua`). One "Path of Building 2 - build planner +
+  simulator engine" entry now saves `pob_app_dir` + `pob_exe` + the
+  simulator's `pob_install_dir` from a single install, keeping the planner
+  and the Build Sim tab pointed at the same copy.
+- **Kalandra missing from the taskbar while running** — the overlay window
+  was created with `Qt.WindowType.Tool`, which Windows hides from the taskbar
+  and Alt-Tab. Now `Qt.WindowType.Window`; the app icon and AppUserModelID
+  were already in place from the minimize fix, so the running overlay shows
+  as a normal open program. (`PricePopup` keeps `.Tool` — a flyout should
+  not claim a taskbar slot.)
+
 ### Added — 2026-07-04 Companion wave (W4, spec: `docs/DESIGN_COMPANION.md`)
 - **The owl guide** (W4-01) — the owl decoration from the Mirror's frame, cut
   out as its own face (`assets/owl_face.png`), perches in the dashboard
@@ -234,6 +356,39 @@ Repo: https://github.com/castleism/Kalandra_Git
   PoB's configured build folder after each scan, so the list can be
   verified against what PoB itself shows. (The green medallion glow is
   unrelated — it simply means a character is active.)
+
+### Fixed — 2026-07-04 uninstaller null-Path crash + git-repo safety
+- Uninstaller rebuilt: null-guarded throughout (LOCALAPPDATA, script path,
+  empty-folder sizes), per-add-on try/catch, -LiteralPath everywhere.
+- **Git-repo guard**: when the Kalandra folder contains .git (a development
+  copy), the final "delete program folder" step is DISABLED with a clear
+  notice — the uninstaller can clean add-ons/data but can never delete the
+  project source. Fresh-install testing belongs in the unzipped release
+  copy, not the repo.
+
+### Fixed — 2026-07-04 installer sizing + machine-wide install detection
+- **Installer window fit-to-content**: before showing, the setup GUI now
+  measures every control, sizes itself to fit (clamped to your working
+  area, scrolling past the clamp), and is user-resizable/maximizable — no
+  more opening half an inch too small on DPI-scaled displays. (Ambition
+  logged: apply the same fit-on-first-show rule to all Qt windows.)
+- **Setup.bat detects installs ANYWHERE on the machine**, not just its own
+  folder: it resolves the desktop Kalandra shortcut's working directory
+  and, if a valid copy lives elsewhere, offers Repair/Uninstall of THAT
+  copy before a fresh install — so running Setup from a new unzip now
+  finds your existing installation as expected.
+
+### Added — 2026-07-04 Kalandra-Setup.exe wizard
+- New installer front door: `installer/setup_wizard.py` (tkinter wizard —
+  welcome → machine-wide install detection → Repair/Uninstall or Fresh
+  install, delegating to the proven PowerShell machinery) compiled to a
+  single `Kalandra-Setup.exe` via `launchers/Build Setup EXE.bat`
+  (PyInstaller --onefile, owl icon; the exe bundles its own Python so a
+  fresh machine needs nothing preinstalled). Sizes itself to content,
+  clamped and centered. Build the exe, then rebuild the release zip so it
+  ships at the zip root. Also uninstaller gained machine-level cleanup
+  (keychain secrets via KalandraOverlay service, pip packages, optional
+  Python 3.12 removal) so fresh-install verification is honest.
 
 ### Changed — 2026-07-04 dashboard tabs grouped into categories
 - The flat 18-tab strip is now two levels: category tabs on top, tools

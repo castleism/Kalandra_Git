@@ -21,6 +21,13 @@ if (Test-Path $ico) { $s.IconLocation = "$ico,0" }
 $s.Description = "Kalandra - Path of Exile 2 overlay companion"
 $s.Save()
 Write-Host "Created Desktop shortcut: $lnk"
+# Register this copy as THE installed Kalandra (HKCU marker) so
+# Setup/the wizard can find it even if the shortcut is deleted.
+try {
+    New-Item -Path "HKCU:\Software\Kalandra" -Force | Out-Null
+    Set-ItemProperty -Path "HKCU:\Software\Kalandra" -Name "InstallPath" -Value $ProjectRoot
+} catch { }
+
 
 # --- Force a Windows icon-cache refresh so the new icon appears now ---
 try {

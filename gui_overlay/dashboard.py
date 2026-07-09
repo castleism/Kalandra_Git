@@ -2485,7 +2485,7 @@ _DASHBOARD_TAB_DEFAULTS = dict(DASHBOARD_TABS)
 TAB_GROUPS = [
     ("🦉 Companion", ["Companion", "Terminal"]),
     ("⚔ Build Planning", ["Build (PoB)", "Build Sim", "PoB (live)",
-                           "PoE Overlay 2"]),
+                           "PoE Overlay 2", "Death Review"]),
     ("💰 Items & Trading", ["Price Check", "Trade Site", "Live Search",
                              "Exchange", "Reserve / BIS", "poe.ninja"]),
     ("🔨 Crafting", ["Crafting", "Craft of Exile"]),
@@ -2751,6 +2751,17 @@ class KalandraDashboard(KalandraFrameWindow):
                 self.tabs.addTab(_placeholder("Grind Tracker",
                                               [f"Unavailable: {e}"]),
                                  "Grind Tracker")
+
+        if self._tab_on("Death Review"):
+            try:
+                from gui_overlay.death_tab import DeathReviewTab
+                self.tabs.addTab(DeathReviewTab(config=self.config,
+                                                ask_ai=self.ask_ai),
+                                 "Death Review")
+            except Exception as e:
+                self.tabs.addTab(_placeholder("Death Review",
+                                              [f"Unavailable: {e}"]),
+                                 "Death Review")
 
         for label, url in [
             ("Craft of Exile", "https://www.craftofexile.com/"),

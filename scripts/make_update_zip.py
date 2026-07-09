@@ -54,7 +54,7 @@ def want(rel):
 
 
 def main():
-    root = os.path.dirname(os.path.abspath(__file__))
+    root = _ROOT   # repo root, not scripts/ (post-reorg)
     out = sys.argv[1] if len(sys.argv) > 1 else "Kalandra_update.zip"
     n = 0
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:

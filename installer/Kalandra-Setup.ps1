@@ -35,7 +35,7 @@ try {
 $Components = @(
     @{ Id="python"; Name="Python 3.12 (64-bit) - the runtime Kalandra runs on";
        Cat="Required"; Credit="Python Software Foundation"; Verified="3.12.x (64-bit)";
-       Install=@{Kind="terminal"; Cmd="winget install -e --id Python.Python.3.12"};
+       Install=@{Kind="terminal"; Cmd="winget install -e --id Python.Python.3.12 --silent --accept-package-agreements --accept-source-agreements"};
        Check=@{Kind="python"}; Account=@{Kind="none"}; Paths=@() }
 
     @{ Id="pip"; Name="Python packages (PyQt6, Whisper, AI SDKs, scraper)";
@@ -56,19 +56,14 @@ $Components = @(
        Check=@{Kind="file"; File="rhubarb.exe"; CfgKey="rhubarb_path"; SaveFile=$true};
        Account=@{Kind="none"}; Paths=@((Join-Path $ProjectRoot "tools\rhubarb")) }
 
-    @{ Id="pob_source"; Name="Path of Building 2 source - headless simulator";
-       Cat="Engine extras"; Credit="Path of Building Community"; Verified="PathOfBuilding-PoE2 (latest)";
-       Install=@{Kind="terminal"; Cmd="{PY} scripts\install_dependencies.py --yes pob_source"};
-       Check=@{Kind="file"; File="HeadlessWrapper.lua"; CfgKey="pob_install_dir"; SaveFile=$false};
-       Account=@{Kind="none"}; Paths=@((Join-Path $ProjectRoot "tools")) }
-
-    @{ Id="pob2_app"; Name="Path of Building 2 - the build planner app";
+    @{ Id="pob2_app"; Name="Path of Building 2 - build planner + simulator engine";
        Cat="Companion apps"; Credit="Path of Building Community"; Verified="latest (tested 2026-06)";
        Install=@{Kind="web"; Url="https://github.com/PathOfBuildingCommunity/PathOfBuilding-PoE2/releases"};
-       Check=@{Kind="file"; File="Path of Building-PoE2.exe"; CfgKey="pob_app_dir"; SaveFile=$false; ExeKey="pob_exe"};
+       Check=@{Kind="file"; File="Path of Building-PoE2.exe"; CfgKey="pob_app_dir"; SaveFile=$false; ExeKey="pob_exe"; LuaKey="pob_install_dir"};
        Account=@{Kind="none"};
        Paths=@((Join-Path (PF86) "Path of Building Community (PoE2)"),
-               (Join-Path $env:LOCALAPPDATA "Programs\Path of Building Community (PoE2)")) }
+               (Join-Path $env:LOCALAPPDATA "Programs\Path of Building Community (PoE2)"),
+               (Join-Path $ProjectRoot "tools\Path of Building Community (PoE2)")) }
 
     @{ Id="exiled2"; Name="Exiled Exchange 2 - PoE2 price-check overlay";
        Cat="Companion apps"; Credit="Kvan7 (fork of Awakened PoE Trade)"; Verified="latest (tested 2026-06)";
@@ -149,17 +144,52 @@ function Log($m) {
     else { Write-Host $m }
 }
 
-function Find-Python {
+function Test-PyCommand($cmdline) {
+    # -> @{Cmd;Exe;Version} or $null. REJECTS the Microsoft Store redirector
+    # stub: every Windows 10/11 ships a fake python.exe in ...\WindowsApps
+    # that exists even when NO Python is installed. Trusting it (or a bare
+    # exit code) is how an installer falsely reports "Python installed" on a
+    # clean machine - so a check only passes with version + real path proof.
+    try {
+        if (Test-Path $cmdline) { $exe = $cmdline; $rest = @() }
+        else {
+            $p = @($cmdline -split " "); $exe = $p[0]; $rest = @()
+            if ($p.Count -gt 1) { $rest = $p[1..($p.Count-1)] }
+        }
+        $src = $null
+        try { $src = (Get-Command $exe -ErrorAction Stop).Source } catch { return $null }
+        if ($src -and $src -match "\\WindowsApps\\") { return $null }
+        $v = ""
+        try { $v = (& $exe @rest --version 2>$null | Out-String).Trim() } catch { return $null }
+        if ($LASTEXITCODE -ne 0 -or $v -notmatch "^Python 3") { return $null }
+        $real = ""
+        try { $real = (& $exe @rest -c "import sys;print(sys.executable)" 2>$null | Out-String).Trim() } catch {}
+        if (-not $real) { $real = $src }
+        if ($real -match "\\WindowsApps\\") { return $null }
+        return @{ Cmd = $cmdline; Exe = $real; Version = $v }
+    } catch { return $null }
+}
+
+function Get-PythonInfo {
+    # Evidence-based detection: which command, which real python.exe, which
+    # version - shown to the user so "installed" is always verifiable.
     foreach ($c in @("py -3.12","py -3","python")) {
-        try {
-            $p = @($c -split " "); $exe=$p[0]; $rest=@(); if($p.Count -gt 1){$rest=$p[1..($p.Count-1)]}
-            $v = & $exe @rest --version 2>$null
-            if ($LASTEXITCODE -eq 0 -and $v) { return $c }
-        } catch {}
+        $i = Test-PyCommand $c
+        if ($i) { return $i }
     }
-    $known = @((Join-Path $env:LOCALAPPDATA "Programs\Python\Python312\python.exe"),
-               "C:\Python312\python.exe")
-    foreach ($k in $known) { if (Test-Path $k) { return $k } }
+    foreach ($k in @((Join-Path $env:LOCALAPPDATA "Programs\Python\Python312\python.exe"),
+                     "C:\Python312\python.exe")) {
+        if (Test-Path $k) {
+            $i = Test-PyCommand $k
+            if ($i) { return $i }
+        }
+    }
+    return $null
+}
+
+function Find-Python {
+    $i = Get-PythonInfo
+    if ($i) { return $i.Cmd }
     return $null
 }
 
@@ -204,7 +234,6 @@ function ResourceFor($id) {
         "pip"        { "Python Packages (wheels)" }
         "luajit"     { "LuaJIT" }
         "rhubarb"    { "Rhubarb" }
-        "pob_source" { "Path of Building 2 Source" }
         "pob2_app"   { "Path of Building 2" }
         "exiled2"    { "Exiled Exchange 2" }
         "xiletrade"  { "Xiletrade" }
@@ -242,15 +271,113 @@ function Notify($title, $text) {
         [System.Windows.Forms.MessageBoxButtons]::OK) | Out-Null
 }
 
+# ---- background installs (2026-07-05): no more cmd /k windows to babysit.
+# Commands run HIDDEN, output streams into the log box, and the component
+# re-checks itself when the command finishes (status flips green on its own).
+function Invoke-ComponentCheck($comp, $st) {
+    $chk = $comp.Check
+    if (-not $chk -or $chk.Kind -eq "none") { return $false }
+    $ok = $false; $msg = ""
+    try {
+        if ($chk.Kind -eq "python") {
+            $pi = Get-PythonInfo
+            $ok = [bool]$pi
+            $msg = if($ok){"$($pi.Version) at $($pi.Exe)"}else{"Python missing (Store stub ignored)"}
+        } elseif ($chk.Kind -eq "pip") {
+            $o = Invoke-Py @("-c","import sys, PyQt6, requests, bs4, numpy, keyring; print('KALANDRA-PKGS-OK @ ' + sys.executable)")
+            $ok = ($o -match "KALANDRA-PKGS-OK"); $msg = if($ok){$o.Trim()}else{"packages missing"}
+        } else {
+            $cfg = Read-Config
+            $folder = $null
+            if ($cfg.PSObject.Properties[$chk.CfgKey] -and $cfg.($chk.CfgKey)) { $folder = [string]$cfg.($chk.CfgKey) }
+            if ($folder -and -not (Test-Path $folder)) { $folder = $null }
+            if ($folder -and -not (Get-Item $folder).PSIsContainer) { $folder = Split-Path -Parent $folder }
+            if (-not $folder) { $folder = Detect-Default $comp }
+            if ($folder) {
+                $res = Test-FileComponent $chk $folder
+                $ok = $res.Ok
+                if ($ok) {
+                    Write-ConfigValue $cfg $chk.CfgKey $res.Save
+                    if ($chk.ExeKey -and $res.Found) { Write-ConfigValue $cfg $chk.ExeKey $res.Found.FullName }
+                    if ($chk.LuaKey) {
+                        $hw = Get-ChildItem -Path $res.Save -Recurse -Filter "HeadlessWrapper.lua" -ErrorAction SilentlyContinue | Select-Object -First 1
+                        if ($hw) { Write-ConfigValue $cfg $chk.LuaKey (Split-Path -Parent $hw.FullName) }
+                    }
+                    Save-Config $cfg
+                    $msg = "found: $($res.Save)"
+                } else { $msg = "not found in $folder" }
+            } else { $msg = "no location set" }
+        }
+    } catch { $msg = "error: $($_.Exception.Message)" }
+    if ($st) {
+        if ($ok) { $st.Text = "OK: $msg"; $st.ForeColor = $green }
+        else { $st.Text = "NEEDS ATTENTION: $msg"; $st.ForeColor = $red }
+    }
+    return $ok
+}
+
+$script:BgJobs  = New-Object System.Collections.ArrayList
+$script:BgTimer = New-Object System.Windows.Forms.Timer
+$script:BgTimer.Interval = 500
+$script:BgTimer.Add_Tick({
+    foreach ($j in @($script:BgJobs)) {
+        try {
+            $fs = [System.IO.File]::Open($j.Log,
+                [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read,
+                [System.IO.FileShare]::ReadWrite)
+            [void]$fs.Seek($j.Pos, [System.IO.SeekOrigin]::Begin)
+            $sr = New-Object System.IO.StreamReader($fs)
+            $new = $sr.ReadToEnd()
+            $j.Pos = $fs.Position
+            $sr.Close(); $fs.Close()
+            if ($new) {
+                foreach ($ln in ($new -split "`r?`n")) {
+                    $ln = $ln.Trim()
+                    if ($ln) { Log ("    | " + $ln) }
+                }
+            }
+        } catch { }
+        if ($j.Proc.HasExited) {
+            [void]$script:BgJobs.Remove($j)
+            Log ("[done] " + $j.Name + " (exit code " + $j.Proc.ExitCode + ")")
+            try { Remove-Item $j.Log -Force -ErrorAction SilentlyContinue } catch { }
+            if ($j.Btn) { $j.Btn.Enabled = $true }
+            if ($j.Comp) { [void](Invoke-ComponentCheck $j.Comp $j.Status) }
+        }
+    }
+    if ($script:BgJobs.Count -eq 0) { $script:BgTimer.Stop() }
+})
+
+function Run-Background($name, $cmd, $comp, $status, $btn) {
+    $tmp = [System.IO.Path]::GetTempFileName()
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = "cmd.exe"
+    $psi.Arguments = "/c cd /d ""$ProjectRoot"" && ($cmd) > ""$tmp"" 2>&1"
+    $psi.CreateNoWindow = $true
+    $psi.UseShellExecute = $false
+    $p = [System.Diagnostics.Process]::Start($psi)
+    if ($btn) { $btn.Enabled = $false }
+    if ($status) {
+        $status.Text = "Installing in the background - output streams into the log below..."
+        $status.ForeColor = $muted
+    }
+    [void]$script:BgJobs.Add(@{ Name=$name; Proc=$p; Log=$tmp; Pos=0
+                                Comp=$comp; Status=$status; Btn=$btn })
+    Log ("[run] " + $name + ": " + $cmd)
+    $script:BgTimer.Start()
+}
+
 # Verify a "file" component against a folder. Returns @{Ok; Found; Save}.
 function Test-FileComponent($check, $folder) {
+    # AltDir shortcut FIRST: cheap, and avoids recursively scanning a whole
+    # game install just to say yes.
+    if ($check.AltDir -and (Test-Path (Join-Path $folder $check.AltDir))) {
+        return @{ Ok=$true; Found=$null; Save=$folder }
+    }
     $found = $null
     if ($check.File -and (Test-Path $folder)) {
         $hit = Get-ChildItem -Path $folder -Recurse -Filter $check.File -ErrorAction SilentlyContinue | Select-Object -First 1
         if ($hit) { $found = $hit }
-    }
-    if (-not $found -and $check.AltDir -and (Test-Path (Join-Path $folder $check.AltDir))) {
-        return @{ Ok=$true; Found=$null; Save=$folder }
     }
     if ($found) {
         $save = if ($check.SaveFile) { $found.FullName } else { $folder }
@@ -276,7 +403,7 @@ $title.Location = New-Object System.Drawing.Point(16,12); $title.Size = New-Obje
 $form.Controls.Add($title)
 
 $sub = New-Object System.Windows.Forms.Label
-$sub.Text = "Install (download page / terminal), Check Location to verify, Connect accounts. Optional items can be skipped. 'Finish' when done; re-run any time to repair."
+$sub.Text = "Install runs in the BACKGROUND (output streams into the log below; nothing extra to close). Check Location to verify, Connect accounts. Optional items can be skipped. 'Finish' when done."
 $sub.ForeColor = $muted; $sub.Location = New-Object System.Drawing.Point(18,42); $sub.Size = New-Object System.Drawing.Size(770,18)
 $form.Controls.Add($sub)
 
@@ -333,7 +460,27 @@ foreach ($comp in $Components) {
     $ver.Location = New-Object System.Drawing.Point(480,$y); $ver.Size = New-Object System.Drawing.Size(290,18)
     $panel.Controls.Add($ver); $y += 19
 
-    $det = Detect-Default $comp
+    # VERIFIED detection only: a folder merely existing is not evidence (an
+    # empty tools\ used to show "Detected" for things long since removed).
+    # A row is green only when the file the component needs is actually found
+    # - saved config location first, then the default paths.
+    $det = $null
+    if ($comp.Check.Kind -eq "file") {
+        $cand = @()
+        $cfg0 = Read-Config
+        if ($comp.Check.CfgKey -and $cfg0.PSObject.Properties[$comp.Check.CfgKey] -and $cfg0.($comp.Check.CfgKey)) {
+            $c0 = [string]$cfg0.($comp.Check.CfgKey)
+            if (Test-Path $c0) {
+                if (-not (Get-Item $c0).PSIsContainer) { $c0 = Split-Path -Parent $c0 }
+                $cand += $c0
+            }
+        }
+        foreach ($p in $comp.Paths) { if ($p -and (Test-Path $p)) { $cand += $p } }
+        foreach ($c in $cand) {
+            $r = Test-FileComponent $comp.Check $c
+            if ($r.Ok) { $det = $r.Save; break }
+        }
+    }
     $status = New-Object System.Windows.Forms.Label
     if ($det) { $status.Text = "Detected: $det"; $status.ForeColor = $green }
     else { $status.Text = "Not verified yet - Install, then Check Location."; $status.ForeColor = $muted }
@@ -349,7 +496,7 @@ foreach ($comp in $Components) {
         $ib.Text = $ibText
         $ib.Location = New-Object System.Drawing.Point($bx,$y); $ib.Size = New-Object System.Drawing.Size(150,26)
         $ib.FlatStyle="Flat"; $ib.BackColor=$gold; $ib.ForeColor=[System.Drawing.Color]::Black
-        $ib.Tag = @{ Ins=$comp.Install; Id=$comp.Id }
+        $ib.Tag = @{ Ins=$comp.Install; Id=$comp.Id; Comp=$comp; Status=$status }
         $ib.Add_Click({
             $t = $this.Tag; $ins = $t.Ins; $id = $t.Id
             try {
@@ -364,8 +511,7 @@ foreach ($comp in $Components) {
                         $cmd = "$py -m pip install --no-index --find-links ""$resDir"" -r requirements.txt"
                         Log "Offline: installing packages from bundled wheels."
                     }
-                    $inner = "cd /d `"$ProjectRoot`" && $cmd"
-                    Start-Process -FilePath "cmd.exe" -ArgumentList "/k $inner"
+                    Run-Background "Python packages (pip)" $cmd $t.Comp $t.Status $this
                     return
                 }
 
@@ -383,9 +529,7 @@ foreach ($comp in $Components) {
                 if ($ins.Kind -eq "web") { Start-Process $ins.Url; Log "Opened download page: $($ins.Url)" }
                 elseif ($ins.Kind -eq "terminal") {
                     $cmd = $ins.Cmd.Replace("{PY}", (PyQuoted))
-                    $inner = "cd /d `"$ProjectRoot`" && $cmd"
-                    Start-Process -FilePath "cmd.exe" -ArgumentList "/k $inner"
-                    Log "Opened a terminal: $cmd"
+                    Run-Background $id $cmd $t.Comp $t.Status $this
                 }
             } catch { Log "Install action failed: $($_.Exception.Message)" }
         })
@@ -406,15 +550,21 @@ foreach ($comp in $Components) {
             $t = $this.Tag; $comp = $t.Comp; $st = $t.Status; $chk = $comp.Check
             try {
                 if ($chk.Kind -eq "python") {
-                    $py = Find-Python
-                    if ($py) { $st.Text="OK: Python found ($py)"; $st.ForeColor=$green; Notify "Check: SUCCESS" "Python is installed:`n$py" }
-                    else { $st.Text="FAIL: Python not found"; $st.ForeColor=$red; Notify "Check: FAILED" "Python was not found. Use Install first." }
+                    $pi = Get-PythonInfo
+                    if ($pi) { $st.Text="OK: $($pi.Version) - $($pi.Exe)"; $st.ForeColor=$green; Notify "Check: SUCCESS" "$($pi.Version) is installed:`n$($pi.Exe)" }
+                    else { $st.Text="FAIL: Python not found (Store stub ignored)"; $st.ForeColor=$red; Notify "Check: FAILED" "No real Python was found. (Windows' built-in fake python.exe from the Microsoft Store does not count.) Use Install first." }
                     return
                 }
                 if ($chk.Kind -eq "pip") {
-                    $o = Invoke-Py @("-c","import PyQt6, requests, bs4, numpy, keyring; print('packages OK')")
-                    if ($o -match "packages OK") { $st.Text="OK: core packages import"; $st.ForeColor=$green; Notify "Check: SUCCESS" "Core Python packages import correctly." }
-                    else { $st.Text="FAIL: packages missing"; $st.ForeColor=$red; Notify "Check: FAILED" ("Packages not importable:`n" + $o) }
+                    $pi = Get-PythonInfo
+                    if (-not $pi) {
+                        $st.Text="FAIL: no Python to check packages with"; $st.ForeColor=$red
+                        Notify "Check: FAILED" "Install Python first - packages cannot be present without it."
+                        return
+                    }
+                    $o = Invoke-Py @("-c","import sys, PyQt6, requests, bs4, numpy, keyring; print('KALANDRA-PKGS-OK @ ' + sys.executable)")
+                    if ($o -match "KALANDRA-PKGS-OK") { $st.Text="OK: core packages import ($($pi.Version))"; $st.ForeColor=$green; Notify "Check: SUCCESS" ("Core Python packages import correctly:`n" + $o.Trim()) }
+                    else { $st.Text="FAIL: packages missing"; $st.ForeColor=$red; Notify "Check: FAILED" ("Packages not importable with $($pi.Exe):`n" + $o) }
                     return
                 }
                 # file kind: pick a folder, verify the expected file
@@ -428,6 +578,12 @@ foreach ($comp in $Components) {
                     $cfg = Read-Config
                     Write-ConfigValue $cfg $chk.CfgKey $res.Save
                     if ($chk.ExeKey -and $res.Found) { Write-ConfigValue $cfg $chk.ExeKey $res.Found.FullName }
+                    if ($chk.LuaKey) {
+                        # The PoB app ships its own Lua source, so ONE install
+                        # powers both the planner and the headless simulator.
+                        $hw = Get-ChildItem -Path $res.Save -Recurse -Filter "HeadlessWrapper.lua" -ErrorAction SilentlyContinue | Select-Object -First 1
+                        if ($hw) { Write-ConfigValue $cfg $chk.LuaKey (Split-Path -Parent $hw.FullName) }
+                    }
                     Save-Config $cfg
                     $st.Text = "OK: found and saved -> $($res.Save)"; $st.ForeColor=$green
                     Notify "Check Location: SUCCESS" ("Found it and saved the location:`n" + $res.Save)
@@ -525,23 +681,34 @@ function Refresh-Freshness {
     } catch { $freshLabel.Text = "Databases: (status unavailable)"; $freshLabel.ForeColor = $muted }
 }
 
-function Import-BundledDB {
-    $src = Join-Path $ResourcesDir "Database\localized_knowledge.db"
-    $dst = Join-Path $ProjectRoot "data_engine\localized_knowledge.db"
-    if (-not (Test-Path $src)) {
-        Notify "Import bundled DB" "No bundled database found at:`n$src`n`nDrop a scraped localized_knowledge.db there first."
-        return
-    }
+function Import-DBFrom {
+    # Copy any localized_knowledge.db (plus scrape caches sitting next to
+    # it) into data_engine - the bundled import and the "Use existing DB"
+    # picker both land here (2026-07-05).
+    param($SrcDb, [switch]$Quiet)
     try {
-        Copy-Item $src $dst -Force
+        $dst = Join-Path $ProjectRoot "data_engine\localized_knowledge.db"
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $dst) | Out-Null
+        Copy-Item $SrcDb $dst -Force
+        $srcDir = Split-Path -Parent $SrcDb
         foreach ($cache in @("poe2db_cache.sqlite","poeninja_cache.sqlite")) {
-            $cs = Join-Path $ResourcesDir "Database\$cache"
+            $cs = Join-Path $srcDir $cache
             if (Test-Path $cs) { Copy-Item $cs (Join-Path $ProjectRoot "data_engine\$cache") -Force }
         }
-        Log "Imported bundled database into data_engine/."
+        Log ("Imported database from " + $SrcDb)
         Refresh-Freshness
-        Notify "Import bundled DB" "Bundled database imported. Freshness updated above."
-    } catch { Notify "Import bundled DB" "Failed: $($_.Exception.Message)" }
+        if (-not $Quiet) { Notify "Import database" "Database imported. Freshness updated above." }
+    } catch { if (-not $Quiet) { Notify "Import database" "Failed: $($_.Exception.Message)" } else { Log ("DB import failed: " + $_.Exception.Message) } }
+}
+
+function Import-BundledDB {
+    param([switch]$Quiet)
+    $src = Join-Path $ResourcesDir "Database\localized_knowledge.db"
+    if (-not (Test-Path $src)) {
+        if (-not $Quiet) { Notify "Import bundled DB" "No bundled database found at:`n$src`n`nUse 'Use existing DB...' to point at one, or run launchers\Update Database.bat to scrape." }
+        return
+    }
+    if ($Quiet) { Import-DBFrom $src -Quiet } else { Import-DBFrom $src }
 }
 
 # ---- bottom buttons ----
@@ -550,12 +717,28 @@ $verifyBtn.Text="Verify All (Repair)"; $verifyBtn.Location=New-Object System.Dra
 $verifyBtn.FlatStyle="Flat"; $verifyBtn.BackColor=$card; $verifyBtn.ForeColor=$fg; $form.Controls.Add($verifyBtn)
 
 $importDbBtn = New-Object System.Windows.Forms.Button
-$importDbBtn.Text="Import bundled DB"; $importDbBtn.Location=New-Object System.Drawing.Point(170,772); $importDbBtn.Size=New-Object System.Drawing.Size(160,32)
+$importDbBtn.Text="Import bundled DB"; $importDbBtn.Location=New-Object System.Drawing.Point(170,772); $importDbBtn.Size=New-Object System.Drawing.Size(140,32)
 $importDbBtn.FlatStyle="Flat"; $importDbBtn.BackColor=$card; $importDbBtn.ForeColor=$fg; $form.Controls.Add($importDbBtn)
 $importDbBtn.Add_Click({ Import-BundledDB })
 
+$useDbBtn = New-Object System.Windows.Forms.Button
+$useDbBtn.Text="Use existing DB..."; $useDbBtn.Location=New-Object System.Drawing.Point(318,772); $useDbBtn.Size=New-Object System.Drawing.Size(140,32)
+$useDbBtn.FlatStyle="Flat"; $useDbBtn.BackColor=$card; $useDbBtn.ForeColor=$fg; $form.Controls.Add($useDbBtn)
+$useDbBtn.Add_Click({
+    # Point at a database you already have (e.g. the uninstaller keeps yours
+    # in Documents\Kalandra-Data, or another Kalandra copy scraped one).
+    $dlg = New-Object System.Windows.Forms.OpenFileDialog
+    $dlg.Title = "Pick an existing Kalandra database (localized_knowledge.db)"
+    $dlg.Filter = "Kalandra database|localized_knowledge.db|SQLite database (*.db)|*.db|All files (*.*)|*.*"
+    $docs = Join-Path ([Environment]::GetFolderPath('MyDocuments')) "Kalandra-Data"
+    if (Test-Path $docs) { $dlg.InitialDirectory = $docs }
+    if ($dlg.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+        Import-DBFrom $dlg.FileName
+    }
+})
+
 $refreshDatesBtn = New-Object System.Windows.Forms.Button
-$refreshDatesBtn.Text="Refresh dates"; $refreshDatesBtn.Location=New-Object System.Drawing.Point(338,772); $refreshDatesBtn.Size=New-Object System.Drawing.Size(120,32)
+$refreshDatesBtn.Text="⟳"; $refreshDatesBtn.Location=New-Object System.Drawing.Point(466,772); $refreshDatesBtn.Size=New-Object System.Drawing.Size(48,32)
 $refreshDatesBtn.FlatStyle="Flat"; $refreshDatesBtn.BackColor=$card; $refreshDatesBtn.ForeColor=$fg; $form.Controls.Add($refreshDatesBtn)
 $refreshDatesBtn.Add_Click({ Refresh-Freshness })
 
@@ -621,21 +804,33 @@ $verifyBtn.Add_Click({
         if ($chk.Kind -eq "none") { continue }
         $ok = $false; $msg = ""
         try {
-            if ($chk.Kind -eq "python") { $ok = [bool](Find-Python); $msg = if($ok){"Python OK"}else{"Python missing"} }
+            if ($chk.Kind -eq "python") {
+                $pi = Get-PythonInfo
+                $ok = [bool]$pi
+                $msg = if($ok){"$($pi.Version) at $($pi.Exe)"}else{"Python missing (Store stub ignored)"}
+            }
             elseif ($chk.Kind -eq "pip") {
-                $o = Invoke-Py @("-c","import PyQt6, requests, bs4, numpy, keyring; print('OK')")
-                $ok = ($o -match "OK"); $msg = if($ok){"packages OK"}else{"packages missing"}
+                $o = Invoke-Py @("-c","import sys, PyQt6, requests, bs4, numpy, keyring; print('KALANDRA-PKGS-OK @ ' + sys.executable)")
+                $ok = ($o -match "KALANDRA-PKGS-OK"); $msg = if($ok){$o.Trim()}else{"packages missing"}
             }
             else {
                 # file kind: try saved config path, then default locations
                 $folder = $null
                 if ($cfg.PSObject.Properties[$chk.CfgKey] -and $cfg.($chk.CfgKey)) { $folder = [string]$cfg.($chk.CfgKey) }
-                if ($folder -and (Test-Path $folder) -and -not (Get-Item $folder).PSIsContainer) { $folder = Split-Path -Parent $folder }
+                if ($folder -and -not (Test-Path $folder)) { $folder = $null }   # stale saved path: fall through to defaults
+                if ($folder -and -not (Get-Item $folder).PSIsContainer) { $folder = Split-Path -Parent $folder }
                 if (-not $folder) { $folder = Detect-Default $comp }
                 if ($folder) {
                     $res = Test-FileComponent $chk $folder
                     $ok = $res.Ok
-                    if ($ok) { Write-ConfigValue $cfg $chk.CfgKey $res.Save; $msg = "found: $($res.Save)" }
+                    if ($ok) {
+                        Write-ConfigValue $cfg $chk.CfgKey $res.Save; $msg = "found: $($res.Save)"
+                        if ($chk.ExeKey -and $res.Found) { Write-ConfigValue $cfg $chk.ExeKey $res.Found.FullName }
+                        if ($chk.LuaKey) {
+                            $hw = Get-ChildItem -Path $res.Save -Recurse -Filter "HeadlessWrapper.lua" -ErrorAction SilentlyContinue | Select-Object -First 1
+                            if ($hw) { Write-ConfigValue $cfg $chk.LuaKey (Split-Path -Parent $hw.FullName) }
+                        }
+                    }
                     else { $msg = "not found in $folder" }
                 } else { $msg = "no location set" }
             }
@@ -649,9 +844,35 @@ $verifyBtn.Add_Click({
 })
 
 Load-Profile
+# Fresh install: release packages ship the latest scraped database in
+# Additional Resources\Database - import it automatically so the first
+# launch already knows the game (2026-07-05).
+try {
+    $autoDst = Join-Path $ProjectRoot "data_engine\localized_knowledge.db"
+    $autoSrc = Join-Path $ResourcesDir "Database\localized_knowledge.db"
+    if (-not (Test-Path $autoDst) -and (Test-Path $autoSrc)) {
+        Log "First run: importing the bundled database automatically..."
+        Import-BundledDB -Quiet
+    }
+} catch { }
 Refresh-Freshness
 Log "Ready. Each row: Install (bundled file in 'Additional Resources' if present, else download)."
 Log "Check Location verifies the needed file; Connect Account stores API keys; Import bundled DB"
 Log "loads a pre-scraped database. Database 'current as of' dates show up top. Version v$Version."
+# --- Fit-to-content (2026-07-04): size to what's inside, clamp to
+# the working area, scroll past the clamp; user-resizable.
+try {
+    $maxB = 0; $maxR = 0
+    foreach ($c in $form.Controls) {
+        if (($c.Top + $c.Height) -gt $maxB) { $maxB = $c.Top + $c.Height }
+        if (($c.Left + $c.Width) -gt $maxR) { $maxR = $c.Left + $c.Width }
+    }
+    $wa = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
+    $form.ClientSize = New-Object System.Drawing.Size([Math]::Min($maxR + 40, $wa.Width - 24), [Math]::Min($maxB + 56, $wa.Height - 24))
+    $form.AutoScroll = $true
+    $form.FormBorderStyle = 'Sizable'
+    $form.MaximizeBox = $true
+} catch { }
+
 
 [void]$form.ShowDialog()

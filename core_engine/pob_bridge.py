@@ -32,8 +32,17 @@ class KalandraPoBBridge:
         home = os.path.expanduser("~")
         docs = os.path.join(home, "Documents")
         appdata = os.environ.get("APPDATA", "")
+        localapp = os.environ.get("LOCALAPPDATA", "")
+        pf86 = os.environ.get("ProgramFiles(x86)", "")
         return [
             os.path.join(appdata, "Path of Building Community (PoE2)", "Builds"),
+            # Portable copies keep Builds INSIDE the install folder. These two
+            # are where installs actually live: the uninstaller's "Move out"
+            # target and the standard installer location (2026-07-05 — a
+            # moved-out portable PoB was invisible to the selector).
+            os.path.join(localapp, "Programs",
+                         "Path of Building Community (PoE2)", "Builds"),
+            os.path.join(pf86, "Path of Building Community (PoE2)", "Builds"),
             os.path.join(appdata, "Path of Building Community", "Builds"),
             os.path.join(docs, "Path of Building Community (PoE2)", "Builds"),
             os.path.join(docs, "Path of Building (PoE2)", "Builds"),
@@ -55,10 +64,16 @@ class KalandraPoBBridge:
         cands = []
         if install_dir:
             cands.append(os.path.join(install_dir, "Settings.xml"))
+        localapp = os.environ.get("LOCALAPPDATA", "")
+        pf86 = os.environ.get("ProgramFiles(x86)", "")
         cands += [
             os.path.join(appdata, "Path of Building Community (PoE2)", "Settings.xml"),
             os.path.join(appdata, "Path of Building Community", "Settings.xml"),
             os.path.join(appdata, "Path of Building", "Settings.xml"),
+            # portable installs keep Settings.xml beside the exe:
+            os.path.join(localapp, "Programs",
+                         "Path of Building Community (PoE2)", "Settings.xml"),
+            os.path.join(pf86, "Path of Building Community (PoE2)", "Settings.xml"),
         ]
         for c in cands:
             try:

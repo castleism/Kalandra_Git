@@ -18,6 +18,7 @@ mss>=9.0.1              # Fast screen capture
 opencv-python>=4.10.0   # H.264/MP4 VideoWriter
 numpy>=2.1.0            # Frame/audio buffers (2.1+ ships Python 3.13 wheels)
 keyring>=25.2.1         # OS keychain for API keys / tokens
+websocket-client>=1.6.0 # OBS Studio replay-buffer control (death review)
 
 # ---------- VOICE (local ears + local voice) ----------
 faster-whisper>=1.0.3   # On-device speech-to-text
