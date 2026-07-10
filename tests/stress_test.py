@@ -208,8 +208,12 @@ try:
     meta = am.list_service_meta()
     check("service meta non-empty", len(meta) >= 10)
     check("service meta no keychain (connected None)", all(s["connected"] is None for s in meta))
-    # without keyring, set/get/is_connected must be safe and falsey
+    # Force the no-keyring branch instead of touching the real OS keychain —
+    # a machine that actually has keyring installed must not have this test
+    # write/read a live secret in the Windows Credential Manager / Keychain.
+    am._using_keyring = False
     guard("set_secret no keyring", lambda: am.set_secret("openai", "x"))
+    check("set_secret returns False without keyring", am.set_secret("openai", "x") is False)
     check("is_connected falsey without keyring", not am.is_connected("openai"))
     check("ai providers present", all(p in SERVICES for p in
           ["openai","anthropic","gemini","deepseek","mistral","xai"]))

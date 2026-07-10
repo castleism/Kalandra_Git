@@ -595,7 +595,10 @@ def make_grabber(region):
         import numpy as np                      # noqa: F401
     except Exception:
         return None
-    reg = {k: int(region[k]) for k in ("left", "top", "width", "height")}
+    try:
+        reg = {k: int(region[k]) for k in ("left", "top", "width", "height")}
+    except (KeyError, TypeError, ValueError):
+        return None
     if reg["width"] < 8 or reg["height"] < 8:
         return None
     state = {}

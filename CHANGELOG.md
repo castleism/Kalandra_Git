@@ -9,6 +9,19 @@ Repo: https://github.com/castleism/Kalandra_Git
 
 ## [Unreleased]
 
+### Fixed — 2026-07-10 nightly CI: craft_hunter junk-region crash + stress_test keychain leak
+- **`core_engine/craft_hunter.py`** — `make_grabber()` now fails soft
+  (returns `None`) on a malformed region dict instead of raising, matching
+  the rest of the function's guarded error paths. Found by
+  `tests/craft_checks.py`'s "junk region fails soft" check.
+- **`tests/stress_test.py`** — the "account_manager — fail-closed without
+  keyring" section now actually forces the no-keyring code path
+  (`am._using_keyring = False`) instead of exercising whatever `keyring`
+  backend happens to be installed on the machine running CI. Previously,
+  on a machine with keyring installed, the test wrote a real secret into
+  the OS credential store and then failed its own "falsey" assertion
+  reading it back. See `docs/CI_LOG.md` for the full incident writeup.
+
 ### Added — 2026-07-10 company north star: acquisition vision + worker routines
 - **`docs/VISION_ACQUISITION.md`** — the thesis in writing: pre-GGG we
   build the pinnacle of PoE2 tooling from public data; post-GGG the same
