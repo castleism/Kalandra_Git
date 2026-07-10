@@ -244,7 +244,10 @@ class ReserveTab(QWidget):
     """Unique / BIS Reserve: snapshot items you're holding for future builds or
     upgrades. Left = your reserve list; right = add/edit a snapshot (paste the
     raw item tooltip straight from the game). Backed by reserve_tracker so it
-    persists across restarts and is fed to the AI as context."""
+    persists across restarts and is fed to the AI as context.
+    W3-31 (2026-07-10): snapshots can be OCR'd straight into the editor."""
+
+    _snap_ocr_ready = pyqtSignal(str, str)      # (text, error)
 
     def __init__(self, tracker=None, parent=None, config=None):
         super().__init__(parent)
@@ -260,6 +263,7 @@ class ReserveTab(QWidget):
         self._build_ui()
         self._refresh_list()
         self._refresh_snapshots()
+        self._snap_ocr_ready.connect(self._on_snap_ocr)
 
     def _build_ui(self):
         root = QVBoxLayout(self)
@@ -287,6 +291,16 @@ class ReserveTab(QWidget):
         rs = QPushButton("Rescan")
         rs.clicked.connect(self._refresh_snapshots)
         snap_row.addWidget(rs)
+        # W3-31 (the missing half): OCR the selected snapshot straight into
+        # the editor — the paste step disappears when a screenshot exists.
+        sc = QPushButton("🔍 Read item from snapshot")
+        sc.setProperty("gem", "sapphire")
+        sc.setToolTip("OCR the selected snapshot's tooltip into the item-text "
+                      "box (RapidOCR or Tesseract — whichever is installed). "
+                      "Always eyeball the result; OCR isn't gospel — Ctrl+C "
+                      "paste stays the exact route.")
+        sc.clicked.connect(self._scan_snapshot)
+        snap_row.addWidget(sc)
         pb = QPushButton("Paste item from clipboard")
         pb.setProperty("gem", "emerald")
         pb.setToolTip("Copied an item in game (Ctrl+C)? This drops it straight "
@@ -401,6 +415,60 @@ class ReserveTab(QWidget):
         p = self.snap_combo.currentData()
         if p:
             QDesktopServices.openUrl(QUrl.fromLocalFile(p))
+
+    def _scan_snapshot(self):
+        """W3-31: OCR the selected snapshot into the editor (background
+        thread; the same optional OCR adapters Craft Hunter uses)."""
+        p = self.snap_combo.currentData()
+        if not p:
+            self.status.setText("Pick a snapshot first (the ruby medallion "
+                                "takes them).")
+            return
+        try:
+            from core_engine.craft_hunter import available_ocr, make_ocr
+        except Exception as e:
+            self.status.setText(f"OCR unavailable: {e}")
+            return
+        kind, msg = available_ocr()
+        if kind is None:
+            self.status.setText(msg)
+            return
+        self.status.setText("Reading the snapshot…")
+
+        def _work():
+            text, err = "", None
+            try:
+                import cv2
+                img = cv2.imread(p)
+                if img is None:
+                    raise RuntimeError("couldn't read the image file")
+                # 2x upscale sharpens small tooltip text for both engines
+                img = cv2.resize(img, None, fx=2, fy=2,
+                                 interpolation=cv2.INTER_CUBIC)
+                ocr = make_ocr()
+                text = (ocr(img) or "").strip() if ocr else ""
+                if not text:
+                    err = ("no text found — crop closer to the tooltip, or "
+                           "paste with Ctrl+C instead")
+            except Exception as e:
+                err = str(e)
+            self._snap_ocr_ready.emit(text, err or "")
+        threading.Thread(target=_work, daemon=True).start()
+
+    def _on_snap_ocr(self, text, err):
+        if err:
+            self.status.setText(f"Snapshot OCR: {err}")
+            return
+        self.item_text.setPlainText(text)
+        try:
+            info = _parse_item_text(text)
+            if not self.name_edit.text().strip():
+                self.name_edit.setText(info.get("name")
+                                       or info.get("base") or "")
+        except Exception:
+            pass
+        self.status.setText("Snapshot read — check the text (OCR isn't "
+                            "gospel), then Save.")
 
     def _open_snap_folder(self):
         import os

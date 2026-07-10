@@ -9,6 +9,17 @@ Repo: https://github.com/castleism/Kalandra_Git
 
 ## [Unreleased]
 
+### Added — 2026-07-10 Reserve tab: read items straight from snapshots (W3-31 finished)
+- **"🔍 Read item from snapshot"** — pick a ruby-medallion screenshot in the
+  Reserve tab's strip and Kalandra OCRs the tooltip into the editor (2x
+  upscale for small text, background thread) and auto-fills the item name
+  from the parsed result. Reuses the exact optional OCR adapters Craft
+  Hunter ships (RapidOCR preferred, your Tesseract install as fallback;
+  with neither, the button tells you the one-line pip install instead of
+  erroring). Verified end-to-end in the sandbox against a rendered
+  tooltip image. Ctrl+C paste stays the byte-exact route and the UI says
+  so — OCR isn't gospel.
+
 ### Added — 2026-07-10 nerf watch in Price Check (W4-06 wired) + overlay transparency slider
 - **🪓 Nerf watch** — price-checking a named item (unique or currency) now
   also asks `nerf_intel` what Kalandra already knows: patch-note /
