@@ -9,6 +9,22 @@ Repo: https://github.com/castleism/Kalandra_Git
 
 ## [Unreleased]
 
+### Added — 2026-07-10 gating work: privacy policy + dependency audit
+- **`docs/PRIVACY.md`** — the plain-words privacy policy the gating table
+  called for: everything is local-first (tables of what lives where,
+  including that Craft Hunter's OCR crops exist in memory only), exactly
+  what can leave the machine and when (fixed host list for public game
+  data; your question text to the AI provider YOU chose, only if you added
+  a key), what Kalandra never does (no telemetry, no server of ours, no
+  game memory/input), and how to delete everything. Marked honestly as
+  pre-legal-review. `docs/SECURITY_AND_PRIVACY.md` §1 was also brought up
+  to date — it still described the plaintext-secrets fallback that was
+  removed when fail-closed keychain storage shipped.
+- **Dependency audit run** — `pip-audit -r requirements.txt` (2026-07-10,
+  sandbox, floors resolved to current releases): **no known
+  vulnerabilities**. Recorded in the ROADMAP gating row; the committed
+  Windows lock file remains the open half of that item.
+
 ### Added — 2026-07-10 Craft Hunter P2+P3 — the live tooltip watcher (CH-P2, CH-P3)
 - **The eye that watches you craft** — calibrate once (📐 drag a box over
   where the item tooltip sits), press 👁 Start, and Kalandra watches that

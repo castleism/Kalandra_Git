@@ -9,14 +9,17 @@ can follow it.
 
 ## 1. Where your secrets live
 
-- API keys (OpenAI/Gemini) and your POESESSID are stored in your operating
-  system's **credential vault** via the `keyring` library — Windows Credential
-  Manager on your PC. They are **never** written to the project folder in plain
-  text and **never** printed to the console or logs.
-- Fallback warning: if `keyring` is ever missing, the app falls back to a local
-  `data_engine/.secrets.json` file and **loudly tells you it is not secure**. For
-  a shipped product this fallback should be removed entirely (fail closed).
+- API keys (OpenAI/Gemini/…), your POESESSID, the OBS websocket password and
+  the GitHub token are stored in your operating system's **credential vault**
+  via the `keyring` library — Windows Credential Manager on your PC. They are
+  **never** written to the project folder in plain text and **never** printed
+  to the console or logs.
+- **Fail closed (shipped):** the old plaintext `.secrets.json` fallback was
+  removed. If `keyring` is unavailable, saving secrets is **refused** rather
+  than written to a file.
 - Nothing is uploaded to us or any server we control. There is no telemetry.
+- The user-facing privacy policy (what's local vs what goes to your chosen AI
+  provider) lives in **`docs/PRIVACY.md`**.
 
 ## 2. What leaves your computer (privacy)
 

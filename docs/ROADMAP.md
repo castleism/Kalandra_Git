@@ -24,10 +24,10 @@ and deliberately did not take.
 |---|---|---|---|
 | Remove plaintext secrets fallback (fail closed) | ✅ DONE | — | `account_manager` now stores only in the OS keychain; if keyring is missing, saving is disabled (no plaintext file). |
 | Visible recording indicator + consent | ✅ DONE | — | Red “● REC” while recording; one-time consent dialog before first capture. |
-| Pin & audit dependencies | ◑ PARTIAL | low | Add a committed `requirements-lock.txt` (exact versions) and run `pip-audit` in CI. Floors are set; full lock pending so 3.13 wheels keep resolving. |
+| Pin & audit dependencies | ◑ PARTIAL | low | Add a committed `requirements-lock.txt` (exact versions) and run `pip-audit` in CI. Floors are set; full lock pending so 3.13 wheels keep resolving. **Audited 2026-07-10** (`pip-audit -r requirements.txt`, Linux sandbox, resolves floors to current releases): **no known vulnerabilities**. The lock file itself must be generated on Windows (`pip freeze`) so it captures the wheels you actually run. |
 | Code-sign the Windows build | ☐ TODO | med ($) | Requires an Authenticode cert (~$100–400/yr) + signing in the build pipeline. Removes SmartScreen warnings. |
 | Per-site ToS / licensing review | ☐ TODO | med (legal) | Especially: poe2wiki is **CC BY-NC** (non-commercial) — redistributing it in a paid product needs review/relicensing. Confirm poe2db, poe.ninja, Craft of Exile commercial terms. |
-| Privacy policy | ☐ TODO | low | State what's processed locally vs sent to the chosen AI provider. |
+| Privacy policy | ✅ DONE 2026-07-10 | — | `docs/PRIVACY.md`: plain-words policy — local-first tables (incl. Craft Hunter's in-memory-only OCR crops), the exact when-and-what of AI-provider sends, fixed outbound host list, user controls/deletion. Still wants the pre-commercial legal review (tracked with the ToS row). |
 | Sandboxed file writes | ◑ PARTIAL | low | All writes already go under `data_engine/`; formalize + document. |
 
 ### How to do the dependency audit now (low-hanging)
