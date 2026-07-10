@@ -26,6 +26,7 @@ app runs normally.
 
 import os
 import json
+import math
 import shutil
 import threading
 import subprocess
@@ -333,8 +334,8 @@ class PoBSimulator:
                 return "?"
         spirit = i("spirit")
         sun = s.get("spirit_unreserved")
-        spirit_str = spirit + (f" (unreserved {int(round(float(sun)))})"
-                               if isinstance(sun, (int, float)) and sun else "")
+        sun_ok = isinstance(sun, (int, float)) and sun and math.isfinite(sun)
+        spirit_str = spirit + (f" (unreserved {int(round(float(sun)))})" if sun_ok else "")
         return (f"Class {g('class')}/{g('ascendancy')} Lv{g('level')} | "
                 f"DPS {i('total_dps')} | Life {i('life')} | ES {i('energy_shield')} | "
                 f"Mana {i('mana')} | Spirit {spirit_str} | EHP {i('ehp')} | "

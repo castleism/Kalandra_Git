@@ -36,7 +36,7 @@ and deliberately did not take.
 | Code-sign the Windows build | ☐ TODO | med ($) | Requires an Authenticode cert (~$100–400/yr) + signing in the build pipeline. Removes SmartScreen warnings. |
 | Per-site ToS / licensing review | ☐ TODO | med (legal) | Especially: poe2wiki is **CC BY-NC** (non-commercial) — redistributing it in a paid product needs review/relicensing. Confirm poe2db, poe.ninja, Craft of Exile commercial terms. |
 | Privacy policy | ✅ DONE 2026-07-10 | — | `docs/PRIVACY.md`: plain-words policy — local-first tables (incl. Craft Hunter's in-memory-only OCR crops), the exact when-and-what of AI-provider sends, fixed outbound host list, user controls/deletion. Still wants the pre-commercial legal review (tracked with the ToS row). |
-| Sandboxed file writes | ◑ PARTIAL | low | All writes already go under `data_engine/`; formalize + document. |
+| Sandboxed file writes | ✅ DONE 2026-07-10 | — | All writes go under `data_engine/`; now formally documented in `docs/PRIVACY.md`'s local-first table (what lives where, incl. the `data_engine/` deletion instructions). |
 
 ### How to do the dependency audit now (low-hanging)
 ```

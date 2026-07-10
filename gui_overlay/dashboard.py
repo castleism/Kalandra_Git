@@ -1867,9 +1867,10 @@ class PriceCheckTab(QWidget):
 
     _nerf_ready = pyqtSignal(str)
 
-    def __init__(self, parent=None, config=None):
+    def __init__(self, parent=None, config=None, ai_vision=None):
         super().__init__(parent)
         self.config = config if isinstance(config, dict) else {}
+        self.ai_vision = ai_vision   # overlay.ai_image_reader(path, instruction) -- W3-33
         self._build_ui()
         self._reload_saved()
         self._nerf_ready.connect(self._on_nerf_watch)
@@ -1900,9 +1901,11 @@ class PriceCheckTab(QWidget):
         row.addWidget(parse_btn)
         scan_btn = QPushButton("Scan screenshot…")
         scan_btn.setProperty("gem", "sapphire")
-        scan_btn.setToolTip("Pick an item screenshot (e.g. a ruby-medallion "
-                            "snapshot); Kalandra OCRs the tooltip text into "
-                            "the box and parses it for the trade search.")
+        scan_btn.setToolTip("Pick ANY item screenshot. AI vision (your "
+                            "configured brain) reads it first when you've "
+                            "added a key -- most accurate on PoE2's stylized "
+                            "fonts; offline OCR (RapidOCR/Tesseract) is the "
+                            "free fallback and the only engine with no key.")
         scan_btn.clicked.connect(self._scan_image)
         row.addWidget(scan_btn)
         self.open_btn = QPushButton("Open trade search")
@@ -2116,9 +2119,13 @@ class PriceCheckTab(QWidget):
             self.summary.append(f"\nCouldn't open browser: {e}\n{url}")
 
     def _scan_image(self):
-        """W3-33 v1: OCR an item screenshot into the paste box, then parse —
-        the same pipeline as Ctrl+C, so 'Open trade search' ties it straight
-        to the official trade site."""
+        """W3-33: turn ANY item screenshot into text, then parse it — the
+        same pipeline as Ctrl+C, so 'Open trade search' ties it straight to
+        the official trade site. Two engines, best available wins: AI
+        vision (the user's configured brain) goes first when a key is set
+        — far more accurate on PoE2's stylized fonts — with offline OCR
+        (Craft Hunter's shared RapidOCR/Tesseract adapters, 2x upscale) as
+        the free fallback and the sole path with no key configured."""
         path, _ = QFileDialog.getOpenFileName(
             self, "Pick an item screenshot", "data_engine/snapshots",
             "Images (*.png *.jpg *.jpeg)")
@@ -2127,31 +2134,26 @@ class PriceCheckTab(QWidget):
         self.summary.setHtml("<i>Scanning screenshot…</i>")
 
         def _work():
-            text, err = "", None
-            try:
-                import pytesseract
-                from PIL import Image
-                img = Image.open(path).convert("L")
-                img = img.resize((img.width * 2, img.height * 2))
-                img = img.point(lambda p: 255 if p > 110 else 0)
-                text = pytesseract.image_to_string(img)
-            except ImportError:
-                err = ("OCR needs:  pip install pytesseract pillow  plus the "
-                       "Tesseract program (tesseract-ocr.github.io). The "
-                       "AI-vision scanner (no install) is next on the roadmap "
-                       "(W3-33).")
-            except Exception as e:
-                err = f"Scan failed: {e}"
+            from core_engine.photo_scanner import scan_item_photo
+            result = scan_item_photo(path, ai_vision=self.ai_vision)
             from PyQt6.QtCore import QTimer
+
             def _done():
-                if err:
-                    self.summary.setHtml(err)
-                elif text.strip():
-                    self.input.setPlainText(text)
-                    self._parse()
-                else:
-                    self.summary.setHtml("No readable text found — crop "
-                                         "tighter to the tooltip and retry.")
+                text = result.get("text") or ""
+                err = result.get("error")
+                if not text:
+                    self.summary.setHtml(
+                        err or "No readable text found — crop tighter to "
+                        "the tooltip and retry.")
+                    return
+                self.input.setPlainText(text)
+                self._parse()
+                label = {"ai": "AI vision", "ocr": "offline OCR"}.get(
+                    result.get("engine"), result.get("engine") or "scan")
+                self.summary.setHtml(
+                    self.summary.toHtml()
+                    + f"<br><i>(read via {label} — check the text before "
+                    "relying on it)</i>")
             QTimer.singleShot(0, _done)
         threading.Thread(target=_work, daemon=True).start()
 
@@ -2792,7 +2794,7 @@ class GroupedTabs(QWidget):
 class KalandraDashboard(KalandraFrameWindow):
     def __init__(self, config=None, pob_sim=None, accounts=None, parent=None,
                  issues=None, build_provider=None, ask_ai=None,
-                 on_build_saved=None):
+                 on_build_saved=None, ai_vision=None):
         try:
             from version import KALANDRA_VERSION as _KV0
         except Exception:
@@ -2805,6 +2807,7 @@ class KalandraDashboard(KalandraFrameWindow):
         self.build_provider = build_provider
         self.ask_ai = ask_ai          # overlay.ask_ai_text (thread + callback)
         self.on_build_saved = on_build_saved   # overlay.load_build_from_file
+        self.ai_vision = ai_vision    # overlay.ai_image_reader(path, instr) — W3-33
         self._web_tabs = {}          # set BEFORE any tab is added (avoids slot crash)
         self._bridge = _Bridge()
         self._bridge.buildsim_text.connect(self._set_buildsim_text)
@@ -2892,7 +2895,8 @@ class KalandraDashboard(KalandraFrameWindow):
                                  "Issues / Changelog")
         if self._tab_on("Price Check"):
             try:
-                self._price_tab = PriceCheckTab(config=self.config)
+                self._price_tab = PriceCheckTab(config=self.config,
+                                                ai_vision=self.ai_vision)
                 self.tabs.addTab(self._price_tab, "Price Check")
             except Exception as e:
                 self._price_tab = None

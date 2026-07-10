@@ -62,3 +62,9 @@ either export Avast's root cert into the certifi bundle pip-audit uses
 it, or run pip-audit from a machine/CI runner without HTTPS-intercepting
 AV. Dependency audit itself remains **not yet run** this cycle — retry
 once the trust-store issue is resolved.
+
+## 2026-07-10 — hardening pass
+
+All green, +55 checks in new `tests/pob_sim_checks.py` (first coverage for
+`core_engine/pob_sim.py`, 350 lines / 0 tests before this run) — found and
+fixed a real NaN-crash in `stats_summary()` along the way.
