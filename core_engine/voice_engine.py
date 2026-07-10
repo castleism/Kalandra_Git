@@ -452,6 +452,109 @@ class VoiceEngine:
             except TypeError:
                 return model.generate_content(user).text.strip()
 
+    # -- AI vision (photo item scanner, W3-33) ---------------------------------
+    def ai_read_image(self, image_path, instruction):
+        """Ask the configured AI brain to transcribe an image (multimodal
+        vision) -- used by the photo item scanner to read tooltip
+        screenshots more accurately than OCR handles PoE2's stylized fonts.
+        Returns "" on any failure (missing key, no vision support, network
+        error) so the caller can fall back to offline OCR; never raises."""
+        key = self._brain_key()
+        if not key or not image_path:
+            return ""
+        try:
+            import base64
+            with open(image_path, "rb") as f:
+                b64 = base64.b64encode(f.read()).decode("ascii")
+            ext = os.path.splitext(image_path)[1].lower().lstrip(".")
+            mime = {"jpg": "image/jpeg", "jpeg": "image/jpeg"}.get(ext, f"image/{ext or 'png'}")
+            kind = PROVIDERS.get(self.brain, {}).get("kind", "openai")
+            base_url = PROVIDERS.get(self.brain, {}).get("base_url")
+            if kind == "gemini":
+                return self._gemini_vision(key, instruction, b64, mime)
+            elif kind == "anthropic":
+                return self._anthropic_vision(key, instruction, b64, mime)
+            else:
+                return self._openai_vision(key, instruction, b64, mime, base_url=base_url)
+        except Exception as e:
+            self._log("VOICE", f"AI vision read failed (falling back to OCR): {e}")
+            return ""
+
+    def _openai_vision(self, key, instruction, b64, mime, base_url=None):
+        from openai import OpenAI
+        kwargs = {"api_key": key}
+        if base_url:
+            kwargs["base_url"] = base_url
+        try:
+            client = OpenAI(timeout=self.AI_TIMEOUT, **kwargs)
+        except TypeError:
+            client = OpenAI(**kwargs)
+        resp = client.chat.completions.create(
+            model=self.model,
+            messages=[{"role": "user", "content": [
+                {"type": "text", "text": instruction},
+                {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}},
+            ]}],
+            temperature=0,
+            max_tokens=800,
+        )
+        try:
+            u = resp.usage
+            self._capture_usage(getattr(u, "prompt_tokens", 0), getattr(u, "completion_tokens", 0))
+        except Exception:
+            pass
+        return (resp.choices[0].message.content or "").strip()
+
+    def _anthropic_vision(self, key, instruction, b64, mime):
+        import anthropic
+        try:
+            client = anthropic.Anthropic(api_key=key, timeout=self.AI_TIMEOUT)
+        except TypeError:
+            client = anthropic.Anthropic(api_key=key)
+        resp = client.messages.create(
+            model=self.model, max_tokens=800, temperature=0,
+            messages=[{"role": "user", "content": [
+                {"type": "image", "source": {"type": "base64", "media_type": mime, "data": b64}},
+                {"type": "text", "text": instruction},
+            ]}])
+        try:
+            u = resp.usage
+            self._capture_usage(getattr(u, "input_tokens", 0), getattr(u, "output_tokens", 0))
+        except Exception:
+            pass
+        parts = [b.text for b in resp.content if getattr(b, "type", None) == "text"]
+        return ("".join(parts)).strip()
+
+    def _gemini_vision(self, key, instruction, b64, mime):
+        import base64 as _b64
+        try:
+            from google import genai
+            from google.genai import types
+            try:
+                client = genai.Client(
+                    api_key=key,
+                    http_options=types.HttpOptions(timeout=self.AI_TIMEOUT * 1000))
+            except Exception:
+                client = genai.Client(api_key=key)
+            img_part = types.Part.from_bytes(data=_b64.b64decode(b64), mime_type=mime)
+            resp = client.models.generate_content(
+                model=self.model, contents=[instruction, img_part])
+            try:
+                um = resp.usage_metadata
+                self._capture_usage(getattr(um, "prompt_token_count", 0),
+                                    getattr(um, "candidates_token_count", 0))
+            except Exception:
+                pass
+            return (resp.text or "").strip()
+        except ImportError:
+            import google.generativeai as genai
+            genai.configure(api_key=key)
+            model = genai.GenerativeModel(self.model)
+            img_bytes = _b64.b64decode(b64)
+            resp = model.generate_content(
+                [instruction, {"mime_type": mime, "data": img_bytes}])
+            return (resp.text or "").strip()
+
     # -- text to speech (LOCAL VOICE) ------------------------------------------
     def speak(self, text, on_amplitude=None, on_viseme=None, on_done=None):
         """Speak text aloud and drive lip-sync.
