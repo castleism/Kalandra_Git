@@ -9,6 +9,26 @@ Repo: https://github.com/castleism/Kalandra_Git
 
 ## [Unreleased]
 
+### Fixed — 2026-07-10 nightly CI hardening: pob_sim NaN crash + new adversarial suite
+- **`core_engine/pob_sim.py`** — `PoBSimulator.stats_summary()` crashed
+  (`ValueError: cannot convert float NaN to integer`) if the headless PoB
+  engine ever reported a non-finite `spirit_unreserved` value, since NaN is
+  truthy in Python and passed the existing `isinstance(...) and sun` guard
+  straight into `int(round(float(sun)))`. Now guarded with `math.isfinite()`
+  so a NaN/inf stat degrades to omitting the "(unreserved ..)" suffix
+  instead of crashing the summary line.
+- **`tests/pob_sim_checks.py`** (new, 55 checks) — first test coverage for
+  `core_engine/pob_sim.py` (previously zero): install-dir discovery across
+  every documented subdir layout (root/src/lua/runtime-lua), the
+  LuaJIT-vs-self-extracting-installer guard, every combination of
+  missing luajit/install/harness and their exact `availability_message()`
+  wording, fail-soft behavior with no subprocess ever spawned when
+  unavailable (`start`/`load_build_xml`/`get_stats`/`simulate`/`diag`/
+  `self_test`), `stats_summary` junk-proofing (non-numeric stats, the NaN
+  case above, the `spirit_unreserved == 0` vs falsy-string vs real-int
+  distinction), and thread-safety of the `_rpc` lock under 8 concurrent
+  callers. Found and fixed the NaN crash above.
+
 ### Added — 2026-07-10 acquisition dossier (docs/ACQUISITION_DOSSIER.md)
 - First build of the pitch-ready dossier: product inventory by pre-GGG
   pillar with test-suite evidence, the post-GGG product page cross-checked
