@@ -9,6 +9,24 @@ Repo: https://github.com/castleism/Kalandra_Git
 
 ## [Unreleased]
 
+### Added — 2026-07-10 W4-04 spec: character import & deep-scan
+- **`docs/CHARACTER_IMPORT_SPEC.md`** — house-style spec for "PoB import +
+  character deep-scan," the next L-sized companion item with no spec yet.
+  Surveyed what already exists (`pob_bridge` fully parses builds,
+  `character_folio` already has the per-character folder shape,
+  `poe_account.get_characters` already soft-fails PoE2's still-404 endpoint,
+  `oauth_pkce` is pre-built and waiting on a GGG `client_id`) and scoped the
+  actual gap: the orchestration glue from interview → character discovery →
+  deep scan → `CharacterFolio`, plus a new `infer_from_scan` path into
+  `PlayerProfile` that doesn't exist yet. Three discovery paths ranked by
+  availability today (manual code/link paste, PoB's own embedded-window
+  import, optional POESESSID character-list lookup that degrades to nothing
+  until GGG ships the endpoint). P1 (manual import → folio → profile
+  inference) needs zero new auth and is independently shippable.
+  `docs/VISION_ACQUISITION.md`'s pipeline matrix gets a new "Character list
+  / identity" row flagging the `AccountData` seam this feature will
+  eventually want. `docs/ROADMAP.md`'s W4-04 row now points at the spec.
+
 ### Fixed — 2026-07-10 nightly CI: craft_hunter junk-region crash + stress_test keychain leak
 - **`core_engine/craft_hunter.py`** — `make_grabber()` now fails soft
   (returns `None`) on a malformed region dict instead of raising, matching
