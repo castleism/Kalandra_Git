@@ -26,6 +26,16 @@ never. The strategy is built so that **if the exit never happens, executing
 it still produces the best standalone product in the ecosystem** — the two
 goals are the same work.
 
+## Business model (decided by Christian, 2026-07-10)
+
+**Kalandra is free to the community, forever. The exit is acquisition, not
+sales.** What follows from that: adoption is the only pre-GGG metric that
+matters; the CC BY-NC-SA data sources are compatible with our free
+distribution (attribution + license notices are our obligation — see
+`docs/GATING_RESEARCH.md` rev 2); code signing is an adoption investment,
+not a sales gate; and any future paid experiment must first re-read the
+GATING_RESEARCH appendix, which flips the licensing analysis.
+
 ## The architectural law: every pipeline must be swappable
 
 Because the endgame is direct integration, **no feature may hard-wire its
@@ -111,9 +121,4 @@ deck's product page, kept current in the acquisition dossier:
 ## What this changes about how we work
 
 - Feature workers check the pipeline matrix before adding any data source.
-- The provider-boundary auditor routine keeps the seams honest.
-- The game-file R&D routine keeps the post-GGG pipeline real, not
-  theoretical.
-- The acquisition dossier (`docs/ACQUISITION_DOSSIER.md`, maintained by
-  routine) stays pitch-ready: feature inventory, compliance posture,
-  integration plan, and the metrics that prove "integral to gameplay."
+- The provider-boundary auditor routine keeps the seam
