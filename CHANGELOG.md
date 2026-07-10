@@ -9,6 +9,44 @@ Repo: https://github.com/castleism/Kalandra_Git
 
 ## [Unreleased]
 
+### Added — 2026-07-10 Craft Hunter P2+P3 — the live tooltip watcher (CH-P2, CH-P3)
+- **The eye that watches you craft** — calibrate once (📐 drag a box over
+  where the item tooltip sits), press 👁 Start, and Kalandra watches that
+  crop of the screen: perceptual-hash skip means idle frames cost
+  microseconds and OCR only runs when the tooltip actually changes (a
+  craft click). The moment a target mod lands: **full-screen gold flash**
+  (3 pulses, click-through by construction — `WindowTransparentForInput`,
+  every click still lands in the game), a **loud bundled alarm chirp**
+  (winsound, beep fallback), the cursor toast, and the watcher pauses so
+  the same item never re-alarms. The Ctrl+C clipboard check stays the
+  authoritative verdict, and the banner says so.
+- **OCR engines are optional and lazy** — RapidOCR preferred, pytesseract
+  (your Tesseract install) as fallback, probed with `find_spec` and loaded
+  on first frame only (voice_engine's Whisper pattern). Neither installed?
+  The watcher button explains the one-line pip install; the stash regex
+  and clipboard confirm never needed OCR at all. OCR digit-confusions
+  (`1O4%` → `104%`, `+l5` → `+15`) are repaired token-wise before matching —
+  words like "Orb" are never touched.
+- **F8 arms/disarms from inside the game** — a passive `GetAsyncKeyState`
+  poll (the exact pattern ghost mode already uses for Ctrl): listen-only,
+  no hook, the game still receives its own F8. Compliance line unchanged
+  (spec §2): the watcher sees pixels and plays sounds; **input is never
+  intercepted, suppressed, or sent.**
+- **P3 polish** — near-miss detection (right mod, roll off-range) gets its
+  own amber toast/banner instead of a false "keep going" (the annul/aug
+  decision moment, spec §10); 🔨 Route hints turns the target list into
+  essence/chaos/omen crafting routes via `offline_craft_guidance` with
+  live Exchange prices when available; session stats now include the
+  honest confirms-per-hit rate. Remaining for P3: pushing those stats
+  into grind_tracker's per-mod return tables.
+- Watcher options: pause-after-hit and only-while-game-is-foreground
+  (via `game_watch.game_foreground`) are both on by default and saved to
+  config. `tests/craft_checks.py` grows to **111 checks** (OCR repair,
+  frame signatures, the whole watcher loop with injected capture/OCR —
+  near-miss → hash-skip → hit → pause → resume — plus fail-soft paths),
+  all green. New optional deps (commented in requirements.txt):
+  `rapidocr-onnxruntime` or `pytesseract`.
+
 ### Added — 2026-07-10 Craft Hunter P1 (CH-P1, spec: docs/CRAFT_HUNTER_SPEC.md)
 - **Craft Hunter tab** (🔨 Crafting) — the alert-only crafting mod sniper's
   first phase. Build a list of target mod rolls ("#% increased Spell

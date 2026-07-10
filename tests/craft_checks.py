@@ -37,9 +37,11 @@ def guard(name, fn):
 
 
 from core_engine.craft_hunter import (
-    BUILTIN_MOD_LINES, STASH_REGEX_BUDGET, _range_alternatives,
-    evaluate_item, match_line, match_target, mod_suggestions,
-    normalize_mod_line, stash_regex, template_regex, value_in_range,
+    BUILTIN_MOD_LINES, STASH_REGEX_BUDGET, TooltipWatcher,
+    _range_alternatives, available_ocr, evaluate_item, frame_signature,
+    frames_differ, make_grabber, make_ocr, match_line, match_target,
+    mod_suggestions, normalize_mod_line, ocr_normalize, stash_regex,
+    template_regex, value_in_range,
 )
 
 # ---- normalize -------------------------------------------------------------
@@ -219,6 +221,114 @@ check("clipboard round trip: hit", res["checked"] and res["hit"])
 res = evaluate_item([{"mod": "#% increased Spell Damage", "min": 120}],
                     info.get("mods") or [])
 check("clipboard round trip: false alarm", res["checked"] and not res["hit"])
+
+# ---- near-miss (CH-P3) -----------------------------------------------------------
+res = evaluate_item([{"mod": "#% increased Spell Damage", "min": 95}],
+                    ["88% increased Spell Damage"])
+check("near miss flagged", res["near_miss"] and not res["hit"])
+res = evaluate_item([{"mod": "#% increased Spell Damage", "min": 95}],
+                    ["+45 to maximum Life"])
+check("wrong mod is not a near miss", not res["near_miss"])
+res = evaluate_item([{"mod": "#% increased Spell Damage", "min": 95},
+                     {"mod": "+# to maximum Life", "min": 200}],
+                    ["104% increased Spell Damage", "+45 to maximum Life"])
+check("a real hit silences near-miss", res["hit"] and not res["near_miss"])
+
+# ---- OCR normalization (CH-P2) -----------------------------------------------------
+check("O->0 inside numbers", ocr_normalize("1O4% increased Spell Damage")
+      == "104% increased Spell Damage")
+check("l->1 with sign", ocr_normalize("+l5 to maximum Life")
+      == "+15 to maximum Life")
+check("all-confusable token fixed", ocr_normalize("Adds lO to 24 Physical "
+      "Damage") == "Adds 10 to 24 Physical Damage")
+check("words never mangled", ocr_normalize("Orb of Alchemy")
+      == "Orb of Alchemy")
+check("Ilo words survive", ocr_normalize("+12% to Cold Resistance")
+      == "+12% to Cold Resistance")
+check("ocr text strips tags too", ocr_normalize("+45 to maximum Life "
+      "(augmented)") == "+45 to maximum Life")
+check("junk-safe ocr_normalize", ocr_normalize(None) == "")
+ok, v = match_line("#% increased Spell Damage",
+                   ocr_normalize("1O4% increased Spell Damage"))
+check("normalized OCR line matches with the right value", ok and v == [104.0])
+
+# ---- frame signatures (CH-P2) --------------------------------------------------------
+A = bytes(range(256)) * 64
+B = bytearray(A); B[0:4096] = b"\xff" * 4096
+check("identical frames hash identically",
+      frame_signature(A) == frame_signature(bytes(A)))
+check("changed frames differ",
+      frames_differ(frame_signature(A), frame_signature(bytes(B))))
+check("signature accepts lists", isinstance(frame_signature([1, 2, 3]), int))
+check("empty frame safe", frame_signature(b"") == 0)
+check("junk frame safe", frame_signature(object()) == 0)
+check("small hamming below threshold is 'same'",
+      not frames_differ(0b1111, 0b1110, bits=6))
+
+# ---- ocr factories fail soft (CH-P2) ---------------------------------------------------
+kind, msg = available_ocr()
+check("available_ocr returns a pair", isinstance(msg, str) and msg)
+check("make_ocr consistent with probe",
+      (make_ocr() is None) == (kind is None))
+check("tiny region rejected",
+      make_grabber({"left": 0, "top": 0, "width": 4, "height": 4}) is None)
+guard("junk region fails soft", lambda: make_grabber({"left": "x"}))
+
+# ---- TooltipWatcher loop (CH-P2, fully injected) ----------------------------------------
+FRAME_MISS = b"\x10" * 4096
+FRAME_HIT = b"\xf0" * 2048 + b"\x00" * 2048
+script = {FRAME_MISS: "88% increased 5pell Damage",     # OCR-noisy miss
+          FRAME_HIT: "1O4% increased Spell Damage"}     # OCR-noisy hit
+feed = [FRAME_MISS, FRAME_MISS, FRAME_HIT, FRAME_HIT]
+state = {"i": 0}
+
+
+def _grab():
+    f = feed[min(state["i"], len(feed) - 1)]
+    state["i"] += 1
+    return f
+
+
+alarms = []
+w = TooltipWatcher([{"mod": "#% increased Spell Damage", "min": 95}],
+                   grab=_grab, ocr=lambda f: script[bytes(f)],
+                   on_alarm=alarms.append)
+seq = [w.poll_once() for _ in range(5)]
+check("watcher sequence near-miss -> skip -> hit -> paused",
+      seq[0] == "near-miss" and seq[1] == "unchanged"
+      and seq[2] == "hit" and seq[3] == "paused" and seq[4] == "paused")
+check("alarm fired exactly once", len(alarms) == 1 and alarms[0]["hit"])
+check("hash-skip really skipped OCR", w.stats["ocr_calls"] == 2
+      and w.stats["skipped"] == 1)
+w.resume()
+check("resume clears pause AND signature", w.poll_once() == "hit"
+      and len(alarms) == 2)
+
+w2 = TooltipWatcher([], grab=_grab, ocr=lambda f: "")
+check("no targets = not configured", w2.poll_once() == "not-configured")
+w3 = TooltipWatcher([{"mod": "+# to maximum Life"}], grab=lambda: None,
+                    ocr=lambda f: "")
+check("no frame fails soft", w3.poll_once() == "no-frame")
+w4 = TooltipWatcher([{"mod": "+# to maximum Life"}], grab=_grab,
+                    ocr=lambda f: "", foreground=lambda: False)
+check("foreground gate idles", w4.poll_once() == "game-not-foreground")
+boom = TooltipWatcher([{"mod": "+# to maximum Life"}],
+                      grab=lambda: b"\x01" * 512,
+                      ocr=lambda f: 1 / 0)
+check("ocr exception fails soft", boom.poll_once().startswith("ocr-error"))
+alarm_boom = TooltipWatcher([{"mod": "+# to maximum Life"}],
+                            grab=lambda: b"\x02" * 512,
+                            ocr=lambda f: "+45 to maximum Life",
+                            on_alarm=lambda r: 1 / 0)
+guard("alarm callback exception contained",
+      lambda: alarm_boom.poll_once())
+fresh = TooltipWatcher([{"mod": "+# to maximum Life"}], grab=lambda: None,
+                       ocr=lambda f: "")
+check("thread starts", fresh.start() is True)
+check("double start refused", fresh.start() is False)
+fresh.stop()
+check("restart after stop allowed", fresh.start() is True)
+fresh.stop()
 
 # ---- suggestions ----------------------------------------------------------------
 s = mod_suggestions(None)

@@ -29,3 +29,8 @@ soundfile>=0.12.1       # WAV helpers
 # ---------- AI BRAIN (install whichever you use) ----------
 openai>=1.40.0          # ChatGPT brain (needs OPENAI_API_KEY)
 google-genai>=1.0.0     # Gemini brain, current SDK (needs GEMINI_API_KEY)
+
+# ---------- CRAFT HUNTER OCR (optional — install ONE if you want the live
+# tooltip watcher; the stash-regex + Ctrl+C confirm work without any) ----------
+# rapidocr-onnxruntime>=1.3.0   # preferred: pip-only, ~60 MB with onnxruntime
+# pytesseract>=0.3.10           # fallback: needs the Tesseract binary installed

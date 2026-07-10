@@ -234,10 +234,12 @@ def match_target(target, mod_lines, fuzz=0.85):
 def evaluate_item(targets, mod_lines, mode="any", fuzz=0.85):
     """The clipboard-confirm verdict (authoritative layer, spec §3b).
 
-    Returns {"checked": bool, "hit": bool, "mode": str,
+    Returns {"checked": bool, "hit": bool, "near_miss": bool, "mode": str,
              "results": [(target, hit, detail), ...]}.
-    checked=False when there's nothing to do (no targets / junk input)."""
-    out = {"checked": False, "hit": False,
+    checked=False when there's nothing to do (no targets / junk input).
+    near_miss (CH-P3, spec §10): the RIGHT mod is on the item but the roll
+    missed the range — the annul/aug decision moment, worth a softer nudge."""
+    out = {"checked": False, "hit": False, "near_miss": False,
            "mode": "all" if mode == "all" else "any", "results": []}
     tl = [t for t in (targets or []) if isinstance(t, dict)]
     if not tl:
@@ -251,7 +253,11 @@ def evaluate_item(targets, mod_lines, mode="any", fuzz=0.85):
             h, d = False, f"target error: {e}"
         hits.append(h)
         out["results"].append((t, h, d))
+        if not h and d.startswith("rolled"):
+            out["near_miss"] = True
     out["hit"] = all(hits) if out["mode"] == "all" else any(hits)
+    if out["hit"]:
+        out["near_miss"] = False
     return out
 
 
@@ -459,6 +465,260 @@ def mod_suggestions(db_path=None, limit=400):
         except Exception:
             pass                                        # builtin list stands
     return list(out.keys())[:max(limit, len(BUILTIN_MOD_LINES))]
+
+
+# ---------------------------------------------------------------------------
+# CH-P2 — the tooltip OCR watcher (spec §3a). Everything below is still pure
+# logic with INJECTED capture/OCR callables, so the whole loop is unit-tested
+# headless; the real mss grabber and OCR engines are optional-import factories.
+# ---------------------------------------------------------------------------
+
+# OCR confusions worth fixing before matching (spec: O->0, l->1; I->1 is the
+# same glyph problem in PoE's font). Applied only to tokens that are clearly
+# numeric — words like "Orb" or "Life" must never be mangled.
+_CONFUSABLE = str.maketrans({"O": "0", "o": "0", "l": "1", "I": "1"})
+_NUMERICISH = re.compile(r"^[+\-]?[OoIl0-9][OoIl0-9.,%]*$")
+
+
+def ocr_normalize(line):
+    """Repair digit-confusions in OCR'd mod text, token-wise.
+
+    A token is rewritten only if it already contains a digit ('1O4%') or is
+    made ENTIRELY of digit-lookalikes ('lO' for 10). Plain words pass through
+    untouched, then the line goes through normalize_mod_line as usual."""
+    out = []
+    for tok in str(line or "").split():
+        if _NUMERICISH.match(tok) and (any(c.isdigit() for c in tok)
+                                       or len(tok) <= 4):
+            tok = tok.translate(_CONFUSABLE)
+        out.append(tok)
+    return normalize_mod_line(" ".join(out))
+
+
+def frame_signature(buf, cells=64, samples_per_cell=24):
+    """Cheap perceptual signature of a captured frame (any bytes-like or
+    buffer-protocol object, e.g. an mss shot or numpy array): split the
+    buffer into `cells` blocks, average a stride-sample of each, emit one
+    bit per block vs the global mean. Idle tooltip frames hash identically,
+    so the expensive OCR only runs when the tooltip actually changed."""
+    try:
+        mv = memoryview(buf).cast("B")
+    except Exception:
+        try:
+            mv = memoryview(bytes(bytearray(int(x) & 0xFF for x in buf)))
+        except Exception:
+            return 0
+    n = len(mv)
+    if n == 0:
+        return 0
+    block = max(1, n // cells)
+    means = []
+    for c in range(cells):
+        lo = min(c * block, n - 1)
+        hi = min(lo + block, n)
+        step = max(1, (hi - lo) // samples_per_cell)
+        sl = mv[lo:hi:step]
+        means.append(sum(sl) / max(1, len(sl)))
+    avg = sum(means) / len(means)
+    sig = 0
+    for i, m in enumerate(means):
+        if m >= avg:
+            sig |= 1 << i
+    return sig
+
+
+def frames_differ(sig_a, sig_b, bits=6):
+    """Hamming distance between two signatures above the noise floor?"""
+    return bin(int(sig_a) ^ int(sig_b)).count("1") > int(bits)
+
+
+def available_ocr():
+    """(engine_name|None, human message). Probe WITHOUT importing (the same
+    find_spec pattern as voice_engine's Whisper): RapidOCR preferred, the
+    user's Tesseract install as fallback, neither -> feature off."""
+    import importlib.util
+
+    def _has(name):
+        try:
+            return importlib.util.find_spec(name) is not None
+        except Exception:
+            return False
+
+    if _has("rapidocr_onnxruntime"):
+        return "rapidocr", "OCR: RapidOCR (onnxruntime)"
+    if _has("pytesseract") and _has("PIL"):
+        return "tesseract", "OCR: pytesseract"
+    return None, ("OCR off — install one engine:  pip install "
+                  "rapidocr-onnxruntime   (or pytesseract + Tesseract)")
+
+
+def make_ocr():
+    """A `callable(image_array) -> text` for the best installed engine, or
+    None. Engines import lazily on FIRST call (RapidOCR loads ~60 MB of
+    onnx models; never pay that at tab-open)."""
+    kind, _msg = available_ocr()
+    if kind == "rapidocr":
+        state = {}
+
+        def _run(img):
+            if "eng" not in state:
+                from rapidocr_onnxruntime import RapidOCR
+                state["eng"] = RapidOCR()
+            try:
+                img = img[:, :, :3]          # BGRA -> BGR if 4-channel
+            except Exception:
+                pass
+            result, _elapse = state["eng"](img)
+            return "\n".join(str(r[1]) for r in (result or []))
+        return _run
+    if kind == "tesseract":
+        def _run(img):
+            import pytesseract
+            from PIL import Image
+            try:
+                img = img[:, :, :3][:, :, ::-1]   # BGRA -> RGB
+            except Exception:
+                pass
+            return pytesseract.image_to_string(Image.fromarray(img))
+        return _run
+    return None
+
+
+def make_grabber(region):
+    """A `callable() -> numpy array|None` capturing one screen region
+    (PHYSICAL pixels: {left, top, width, height}). mss + numpy are core
+    deps but still guarded — a missing lib returns None (feature off), and
+    the mss instance is created lazily INSIDE the watcher's own thread
+    (mss handles are not thread-portable)."""
+    try:
+        import mss                              # noqa: F401
+        import numpy as np                      # noqa: F401
+    except Exception:
+        return None
+    reg = {k: int(region[k]) for k in ("left", "top", "width", "height")}
+    if reg["width"] < 8 or reg["height"] < 8:
+        return None
+    state = {}
+
+    def _grab():
+        try:
+            import mss as _mss
+            import numpy as _np
+            if "sct" not in state:
+                state["sct"] = _mss.mss()
+            return _np.asarray(state["sct"].grab(reg))
+        except Exception:
+            return None
+    return _grab
+
+
+class TooltipWatcher:
+    """The live alarm loop (spec §3a): grab crop -> hash -> skip unchanged ->
+    OCR -> normalize -> evaluate against the targets -> alarm on hit.
+
+    Capture, OCR, and foreground-detection are INJECTED callables so the
+    loop is fully testable headless (`poll_once` is the unit); `run_forever`
+    just repeats it on a daemon thread. Alarm/status callbacks fire on the
+    WATCHER thread — Qt callers marshal via signals. Read-only by design:
+    this class sees pixels and produces callbacks; it cannot touch input."""
+
+    def __init__(self, targets, mode="any", grab=None, ocr=None,
+                 on_alarm=None, on_status=None, foreground=None,
+                 interval=0.12, fuzz=0.85, auto_pause=True, hash_bits=6):
+        self.targets = list(targets or [])
+        self.mode = mode
+        self.grab = grab
+        self.ocr = ocr
+        self.on_alarm = on_alarm
+        self.on_status = on_status
+        self.foreground = foreground
+        self.interval = max(0.03, float(interval))
+        self.fuzz = fuzz
+        self.auto_pause = bool(auto_pause)
+        self.hash_bits = int(hash_bits)
+        self.paused = False
+        self.stats = {"frames": 0, "ocr_calls": 0, "hits": 0, "skipped": 0}
+        self._sig = None
+        self._stop = None
+        self._thread = None
+
+    # -- one loop iteration (the unit tests drive this directly) -----------
+    def poll_once(self):
+        """Returns a short status word: not-configured / paused /
+        game-not-foreground / no-frame / unchanged / checked / near-miss /
+        hit / ocr-error."""
+        if not self.grab or not self.ocr or not self.targets:
+            return "not-configured"
+        if self.paused:
+            return "paused"
+        if self.foreground is not None and not self.foreground():
+            return "game-not-foreground"
+        frame = self.grab()
+        if frame is None:
+            return "no-frame"
+        self.stats["frames"] += 1
+        sig = frame_signature(frame)
+        if self._sig is not None and not frames_differ(sig, self._sig,
+                                                       self.hash_bits):
+            self.stats["skipped"] += 1
+            return "unchanged"
+        self._sig = sig
+        try:
+            text = self.ocr(frame) or ""
+        except Exception as e:
+            return f"ocr-error: {e}"
+        self.stats["ocr_calls"] += 1
+        lines = [ocr_normalize(ln) for ln in str(text).splitlines()
+                 if ln.strip()]
+        res = evaluate_item(self.targets, lines, mode=self.mode,
+                            fuzz=self.fuzz)
+        if res.get("hit"):
+            self.stats["hits"] += 1
+            if self.auto_pause:
+                self.paused = True       # never re-alarm on the same item
+            if self.on_alarm:
+                try:
+                    self.on_alarm(res)
+                except Exception:
+                    pass
+            return "hit"
+        return "near-miss" if res.get("near_miss") else "checked"
+
+    def resume(self):
+        """Clear a post-hit pause AND the frame signature (the next frame
+        must be treated as new — it's a different item now)."""
+        self.paused = False
+        self._sig = None
+
+    # -- threading ----------------------------------------------------------
+    def start(self):
+        import threading
+        if self._thread is not None:
+            return False
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._loop, daemon=True)
+        self._thread.start()
+        return True
+
+    def stop(self):
+        if self._stop is not None:
+            self._stop.set()
+        self._thread = None
+
+    def _loop(self):
+        import time as _time
+        last_status = None
+        while self._stop is not None and not self._stop.is_set():
+            status = self.poll_once()
+            if status != last_status and self.on_status:
+                try:
+                    self.on_status(status)
+                except Exception:
+                    pass
+            last_status = status
+            idle = status in ("paused", "game-not-foreground",
+                              "not-configured", "no-frame")
+            _time.sleep(0.5 if idle else self.interval)
 
 
 if __name__ == "__main__":
