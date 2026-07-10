@@ -393,3 +393,23 @@ section is the honest ledger of what's OPEN.
 4. **W4-20 install modes** — Local Copy / Contained / Browser-based per
    add-on; the uninstaller's Move-out is the migration path.
 5. **W4-09/10** — researched auto-attendant, then the OBS streamer suite.
+
+## Data sources & licenses (attribution)
+
+Kalandra is a **free fan-made tool**. It is not affiliated with, endorsed
+by, or approved by Grinding Gear Games. Path of Exile, Path of Exile 2,
+and all related game content, names, and imagery are the intellectual
+property of Grinding Gear Games.
+
+The local knowledge base is built from public community sources, with
+thanks:
+
+- **poe2db.tw** — game data pages. Wiki-derived content on that site is
+  licensed CC BY-NC-SA 3.0.
+- **poe2wiki.net** (Project PoE Wiki) — wiki content licensed
+  [CC BY-NC-SA 3.0](https://creativecommons.org/licenses/by-nc-sa/3.0/).
+- **poe.ninja** — public economy data.
+
+Wiki-derived content bundled in the database remains under CC BY-NC-SA
+3.0 — if you reuse it, the same license applies to it. Kalandra itself is
+distributed free of charge, consistent with those NonCommercial terms.

@@ -9,6 +9,16 @@ Repo: https://github.com/castleism/Kalandra_Git
 
 ## [Unreleased]
 
+### Added — 2026-07-10 data attribution & license notices (v1)
+- READ_ME_FIRST.md gains a "Data sources & licenses" section (poe2db /
+  poe2wiki CC BY-NC-SA 3.0 attribution, poe.ninja credit, the standard
+  not-affiliated-with-GGG fan-content disclaimer), and the Database
+  window (double-click the sync medallion) shows the same notice in-app —
+  our compliance obligation as a free distributor, per
+  docs/GATING_RESEARCH.md. Remaining: Settings/About entry + installer
+  line. Also: docs/OUTREACH_DRAFTS.md — ready-to-send emails to GGG and
+  the tool-site operators.
+
 ### Changed — 2026-07-10 gating table re-scoped for the free-forever decision
 - ROADMAP's gating table is now "must-haves before **wide release**" (was
   "before selling"): code signing becomes optional-but-recommended (Azure

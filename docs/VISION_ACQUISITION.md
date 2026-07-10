@@ -121,4 +121,9 @@ deck's product page, kept current in the acquisition dossier:
 ## What this changes about how we work
 
 - Feature workers check the pipeline matrix before adding any data source.
-- The provider-boundary auditor routine keeps the seam
+- The provider-boundary auditor routine keeps the seams honest.
+- The game-file R&D routine keeps the post-GGG pipeline real, not
+  theoretical.
+- The acquisition dossier (`docs/ACQUISITION_DOSSIER.md`, maintained by
+  routine) stays pitch-ready: feature inventory, compliance posture,
+  integration plan, and the metrics that prove "integral to gameplay."

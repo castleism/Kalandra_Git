@@ -3314,6 +3314,16 @@ class KalandraOverlayApp(ParentClass):
             for cb in boxes.values():
                 cb.toggled.connect(lambda _c, s=_save: s())
 
+            lic = QLabel(
+                "Data sources & licenses: game data with thanks to poe2db.tw "
+                "and poe2wiki.net (wiki content: CC BY-NC-SA 3.0) and "
+                "economy data from poe.ninja. Kalandra is a free fan tool, "
+                "not affiliated with Grinding Gear Games; all game IP "
+                "belongs to GGG. Full notices: READ_ME_FIRST.md.")
+            lic.setWordWrap(True)
+            lic.setStyleSheet(f"color:{_t.FAINT};font-size:10px;")
+            v.addWidget(lic)
+
             brow = QHBoxLayout()
             sync_btn = QPushButton("⟳ Sync now")
             sync_btn.setProperty("gem", "sapphire")
