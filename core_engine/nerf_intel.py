@@ -139,6 +139,114 @@ def price_shift(series):
             "cliff_at": cliff_at, "direction": direction}
 
 
+# ---------------------------------------------------------------------------
+# W4-06 wiring: feed the signals from what Kalandra already has on disk —
+# patch-note pages in the scraped knowledge base, and the poe.ninja daily
+# snapshots the Exchange tab writes to economy_history. Read-only sqlite,
+# still no network.
+# ---------------------------------------------------------------------------
+
+_VERSION_RE = re.compile(r"\b(\d+\.\d+(?:\.\d+)*[a-z]?)\b")
+
+
+def _default_db_path():
+    try:
+        from core_engine.database_handler import KalandraDBHandler
+        import os
+        return os.path.join(KalandraDBHandler._configured_db_dir(),
+                            "localized_knowledge.db")
+    except Exception:
+        return "data_engine/localized_knowledge.db"
+
+
+def _version_key(label):
+    """Sortable key for '0.2.1c'-style labels; unknown -> sorts first."""
+    m = _VERSION_RE.search(str(label or ""))
+    if not m:
+        return (0,)
+    parts = []
+    for p in m.group(1).split("."):
+        num = re.match(r"(\d+)([a-z]?)", p)
+        parts.append(int(num.group(1)))
+        if num.group(2):
+            parts.append(ord(num.group(2)))
+    return tuple(parts)
+
+
+def patches_from_db(db_path=None, limit=40):
+    """[(version_label, patch_text), ...] oldest->newest, mined from the
+    knowledge base: any ledger page whose topic or URL says patch-notes /
+    'Version X.Y.Z' (poe2wiki's version pages, poe2db patch pages). Empty
+    list on any problem — the signal degrades to 'none', never crashes."""
+    import sqlite3
+    out = []
+    path = db_path or _default_db_path()
+    try:
+        con = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=5)
+        try:
+            rows = con.execute(
+                "SELECT topic_tag, content_payload, source_url "
+                "FROM knowledge_ledger WHERE "
+                "  lower(topic_tag) LIKE '%patch note%'"
+                "  OR lower(topic_tag) LIKE '%patch_note%'"
+                "  OR lower(topic_tag) LIKE 'version %'"
+                "  OR source_url LIKE '%Version_%'"
+                "  OR source_url LIKE '%patch-notes%'"
+                " LIMIT ?", (int(limit),)).fetchall()
+        finally:
+            con.close()
+        for topic, text, url in rows:
+            label = None
+            for probe in (topic, url):
+                m = _VERSION_RE.search(str(probe or ""))
+                if m:
+                    label = m.group(1)
+                    break
+            out.append((label or str(topic or "?"), str(text or "")))
+        out.sort(key=lambda t: _version_key(t[0]))
+    except Exception:
+        return []
+    return out
+
+
+def price_series_from_db(item_name, league, db_path=None, days=90):
+    """[(day, value), ...] chronological from economy_history (the daily
+    snapshots the Exchange tab stores — currency/fragments only; uniques
+    aren't in that feed, so they get the patch signal alone). Empty list on
+    any problem."""
+    import sqlite3
+    path = db_path or _default_db_path()
+    try:
+        con = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=5)
+        try:
+            rows = con.execute(
+                "SELECT day, value FROM economy_history "
+                "WHERE league=? AND lower(name)=lower(?) "
+                "AND day >= date('now', ?) ORDER BY day",
+                (str(league or "Standard"), str(item_name or ""),
+                 f"-{int(days)} day")).fetchall()
+        finally:
+            con.close()
+        return [(str(d), v) for d, v in rows]
+    except Exception:
+        return []
+
+
+def nerf_watch(item_name, league=None, db_path=None, aliases=()):
+    """One-call W4-06 signal for the Price Check tab and reviews:
+    value_intuition fed straight from the local DB. Adds 'has_signals' so
+    callers can stay silent when there's nothing to say."""
+    patches = patches_from_db(db_path=db_path)
+    series = price_series_from_db(item_name, league, db_path=db_path) \
+        if league else []
+    vi = value_intuition(item_name, patches=patches, series=series,
+                         aliases=aliases)
+    vi["has_signals"] = (vi["patch"]["verdict"] != "none"
+                         or (vi["price"] or {}).get("direction")
+                         in ("down", "up"))
+    return vi
+
+
 def value_intuition(item_name, patches=None, series=None, aliases=()):
     """The combined, honestly-worded signal for reviews and the AI.
     -> {'summary': str, 'patch': {...}, 'price': {...}|None}"""

@@ -1793,13 +1793,18 @@ class PriceCheckTab(QWidget):
     buying, no price fabrication — you read real listings yourself, per GGG ToS.
     W3-22: searches can be saved by name and re-run any time.
     W3-21: when the stat-id map is cached, the search opens with the item's
-    filters already in the query (premium/good mods enabled at their rolls)."""
+    filters already in the query (premium/good mods enabled at their rolls).
+    W4-06: named items get a background nerf-watch line (patch-note signal
+    from the local knowledge base + poe.ninja history from economy_history)."""
+
+    _nerf_ready = pyqtSignal(str)
 
     def __init__(self, parent=None, config=None):
         super().__init__(parent)
         self.config = config if isinstance(config, dict) else {}
         self._build_ui()
         self._reload_saved()
+        self._nerf_ready.connect(self._on_nerf_watch)
         _trade_stats_index()          # warm the stat map in the background
 
     def _build_ui(self):
@@ -1964,6 +1969,37 @@ class PriceCheckTab(QWidget):
                     f"({est['known_mods']}/{est['total_mods']} mods known from "
                     f"your {led2.stats()['priced']} priced checks — your own "
                     f"history, not a market quote)</span>")
+        except Exception:
+            pass
+        self._kick_nerf_watch(info, league)
+
+    def _kick_nerf_watch(self, info, league):
+        """W4-06: named items (uniques, currency) get a value-intuition line
+        — patch-note lines that mention them + their poe.ninja price curve —
+        computed off-thread from the LOCAL db only, appended when ready."""
+        name = (info.get("name") or "").strip()
+        rarity = (info.get("rarity") or "").lower()
+        cls = (info.get("item_class") or "").lower()
+        if not name or not (rarity == "unique" or "currency" in cls):
+            return
+
+        def _work():
+            try:
+                from core_engine.nerf_intel import nerf_watch
+                vi = nerf_watch(name, league=league)
+                if vi.get("has_signals"):
+                    self._nerf_ready.emit(vi["summary"])
+            except Exception:
+                pass
+        threading.Thread(target=_work, daemon=True).start()
+
+    def _on_nerf_watch(self, summary):
+        try:
+            self.summary.setHtml(
+                self.summary.toHtml()
+                + "<br><span style='color:#e0b050;'>🪓 Nerf watch: "
+                + summary + " (local patch notes + your price history — "
+                "a signal, not a verdict)</span>")
         except Exception:
             pass
 

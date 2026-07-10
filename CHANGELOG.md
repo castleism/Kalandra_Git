@@ -9,6 +9,25 @@ Repo: https://github.com/castleism/Kalandra_Git
 
 ## [Unreleased]
 
+### Added — 2026-07-10 nerf watch in Price Check (W4-06 wired) + overlay transparency slider
+- **🪓 Nerf watch** — price-checking a named item (unique or currency) now
+  also asks `nerf_intel` what Kalandra already knows: patch-note /
+  "Version X.Y.Z" pages mined from your scraped knowledge base
+  (`patches_from_db`, oldest→newest by real version order) and the item's
+  own price curve from the Exchange tab's daily `economy_history`
+  snapshots (`price_series_from_db`). Signals — nerf/buff-flagged patch
+  lines, price drops with cliff detection, and the honest
+  "no balance change found — likely supply/league effects" Temple-
+  Headhunter wording — appear as an amber line under the summary,
+  computed on a background thread from the LOCAL db only, and only when
+  there's something to say. `nerf_watch()` is the one-call API the
+  character-review path (W4-05) will reuse. `tests/nerf_checks.py` grows
+  30 → 43, all green.
+- **Overlay transparency slider** (Settings, mid-term roadmap item) —
+  35–100%, applies live while you drag (the paint path reads it from
+  config each frame), with ghost mode's in-game fade multiplying on top.
+  Junk config values clamp instead of blanking the overlay.
+
 ### Added — 2026-07-10 DB status window (double-click the sync medallion)
 - The sync medallion learned the same single/double-click split as its
   siblings (single = sync, now properly deferred 250ms; double = the new

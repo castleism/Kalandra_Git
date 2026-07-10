@@ -133,7 +133,7 @@ diamonds), currency-orb iconography. Gorgeous, everywhere.
 | W4-03 | Companion tab: threaded orb chats + friendly color-coded action log | ✅ v1 SHIPPED 2026-07-04 | L | `companion_tab.py`; auto-attendant stub (local templates, off by default). |
 | W4-04 | PoB import + character deep-scan (auth via saved account, name or class/lvl/league) | ☐ TODO | L | DESIGN_COMPANION P1. Infer profile facts from imports instead of asking. |
 | W4-05 | Character reviews + per-character orb threads + standard-shuffle detection | ☐ TODO | L | P2. Owl confirms playstyle/gear drift on review open. |
-| W4-06 | Nerf-aware price intelligence (patch-note diff + league price curves) | ◑ ENGINE 2026-07-04 | L | P3. `nerf_intel.py` shipped + 30 checks green (patch signal, price cliffs, Temple-Headhunter supply-vs-nerf distinction). Remaining: feed it real patch notes from the DB + poe.ninja history, surface in reviews/price check. |
+| W4-06 | Nerf-aware price intelligence (patch-note diff + league price curves) | ◑ v2 WIRED 2026-07-10 | L | P3. Engine (2026-07-04) + the real feeds (2026-07-10): `patches_from_db` mines patch-note/Version pages from the knowledge base, `price_series_from_db` reads the Exchange tab's `economy_history` snapshots, `nerf_watch()` is the one-call signal — and Price Check now shows an amber "🪓 Nerf watch" line for named items (background thread, local DB only). `tests/nerf_checks.py` 43 green. Remaining: surface in character reviews (W4-05 path). |
 | W4-00 | Provider interfaces — every 3rd-party tool swappable (north star) | ✅ SHIPPED 2026-07-04 | M | `core_engine/providers.py`: BuildCalculator / Economy / TradeSearch / CraftSimulator / GameData / Capture + registry; migrate call sites opportunistically. |
 | W4-07 | Character folders + roadmap files + PoB-as-calculator + build costing | ◑ FOUNDATION 2026-07-04 | XL | P4. `character_folio.py` shipped (folders, scaffold docs, budgeted prompt corpus). Remaining: review/roadmap generation, craft-vs-buy, character sheet panel. |
 | W4-08 | BIS bank ↔ AI sims, live-search suggestions, notifications (desktop/email/SMS + orb bubble w/ trade link) | ☐ TODO | L | P5. Variant selectors (ilvl/spell level) in Reserve tab. |
@@ -223,7 +223,9 @@ whisper, and click in game is the player's.
 - **Investment tracker** — currency invested per craft, alongside Reserve/BIS;
   alert on pickup of items matching wanted expedition-reforge mods.
 - **Temple planner.**
-- **Overlay transparency slider** (Settings).
+- **Overlay transparency slider** (Settings) — ✅ SHIPPED 2026-07-10: live
+  slider (35–100%), read from config every paint so it applies as you drag;
+  ghost mode's fade multiplies on top of it.
 - **Minimize-to-icon** when a menu opens, so two windows aren't fighting to
   stay on top.
 
