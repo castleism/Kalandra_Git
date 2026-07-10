@@ -1515,7 +1515,7 @@ class ExchangeTab(QWidget):
         row.addWidget(QLabel("League:"))
         self.league = QComboBox()
         self.league.setEditable(True)
-        self.league.addItems(["Rise of the Abyssal", "Dawn of the Hunt", "Standard",
+        self.league.addItems(["Runes of Aldur", "Standard",
                               "Hardcore"])
         row.addWidget(self.league, 1)
         self.refresh_btn = QPushButton("Refresh prices")
@@ -1893,7 +1893,7 @@ class PriceCheckTab(QWidget):
         row = QHBoxLayout()
         row.addWidget(QLabel("League:"))
         self.league = QComboBox(); self.league.setEditable(True)
-        self.league.addItems(["Rise of the Abyssal", "Dawn of the Hunt", "Standard",
+        self.league.addItems(["Runes of Aldur", "Standard",
                               "Hardcore"])
         row.addWidget(self.league, 1)
         parse_btn = QPushButton("Read item")
@@ -2575,7 +2575,7 @@ class LiveSearchTab(QWidget):
         row.addSpacing(14)
         row.addWidget(QLabel("League:"))
         self.league = QComboBox(); self.league.setEditable(True)
-        self.league.addItems(["Rise of the Abyssal", "Dawn of the Hunt", "Standard",
+        self.league.addItems(["Runes of Aldur", "Standard",
                               "Hardcore"])
         row.addWidget(self.league, 1)
         go_btn = QPushButton("Open here")

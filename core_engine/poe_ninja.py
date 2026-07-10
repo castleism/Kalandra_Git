@@ -6,12 +6,12 @@ currency/item pricing and public ladder build aggregates. It does NOT and cannot
 return your personal characters (that's the GGG side -- see poe_account.py).
 
 PoE2 economy endpoint (separate from PoE1's /api/data/...):
-    https://poe.ninja/poe2/api/economy/currencyexchange/overview
-        ?leagueName=<League>&overviewName=Currency
+    https://poe.ninja/poe2/api/economy/exchange/current/overview
+        ?league=<League>&type=Currency
 Response: {"lines":[{"id","primaryValue","volumePrimaryValue"}],
            "items":[{"id","name","icon"}]}  -- join lines->items by id for names.
 
-Valid PoE2 leagues include: "Standard", "Dawn of the Hunt", "Rise of the Abyssal"
+Valid PoE2 leagues include: "Standard", "Hardcore", "Runes of Aldur"
 (challenge leagues change; use the exact name shown on poe.ninja/poe2/economy).
 
 Polite use: we cache via requests-cache if available and pass a descriptive UA.
@@ -28,8 +28,13 @@ except Exception:
     requests_cache = None
 
 # PoE2 economy API (undocumented but public; powers poe.ninja/poe2/economy).
+# 2026-07-10: poe.ninja rewrote its frontend (Astro) and moved this off
+# /currencyexchange/overview?leagueName=&overviewName= (now a Cloudflare-
+# cached 404) to /exchange/current/overview?league=&type= — confirmed via
+# the live page's own network calls. Response shape (top-level "items"/
+# "lines") is unchanged, so only the URL + param names moved.
 POE2_BASE = "https://poe.ninja/poe2/api/economy"
-CURRENCY_URL = POE2_BASE + "/currencyexchange/overview"
+CURRENCY_URL = POE2_BASE + "/exchange/current/overview"
 ITEM_URL = POE2_BASE + "/item/overview"
 HEADERS = {"User-Agent": "KalandraOverlay/1.0 (personal theorycrafting tool)"}
 
@@ -68,7 +73,7 @@ class PoENinja:
             return []
         try:
             r = self.session.get(CURRENCY_URL,
-                                 params={"leagueName": league, "overviewName": "Currency"},
+                                 params={"league": league, "type": "Currency"},
                                  timeout=15)
             if r.status_code != 200:
                 self._log(f"poe.ninja currency HTTP {r.status_code} for league '{league}' "
@@ -107,7 +112,7 @@ class PoENinja:
             self._log(f"Stored {stored} PoE2 economy rows from poe.ninja ({league}).")
         else:
             self._log(f"poe.ninja returned no economy rows for league '{league}'. "
-                      f"Try a current league name (e.g. 'Standard', 'Rise of the Abyssal').")
+                      f"Try a current league name (e.g. 'Standard', 'Runes of Aldur').")
         return stored
 
 

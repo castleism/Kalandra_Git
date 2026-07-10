@@ -197,6 +197,40 @@ try:
     from core_engine import poe_ninja as pn
     # If the module exposes a pure parser, test it with mock; otherwise just import.
     check("poe_ninja imports", hasattr(pn, "PoENinja"))
+
+    # Regression for the 2026-07-10 poe.ninja Astro rewrite: the currency
+    # endpoint moved from /currencyexchange/overview?leagueName=&overviewName=
+    # to /exchange/current/overview?league=&type= (old path now 404s, cached
+    # by Cloudflare). Lock in the URL + param names so a silent revert or a
+    # copy-paste regression is caught here instead of live in the overlay.
+    check("currency URL uses the current exchange path",
+          pn.CURRENCY_URL == pn.POE2_BASE + "/exchange/current/overview")
+
+    class _FakeResp:
+        status_code = 200
+        def json(self):
+            return {"items": [{"id": "divine", "name": "Divine Orb"}],
+                     "lines": [{"id": "divine", "primaryValue": 1.0,
+                                "volumePrimaryValue": 42}]}
+
+    class _FakeSession:
+        def __init__(self):
+            self.calls = []
+        def get(self, url, params=None, timeout=None):
+            self.calls.append((url, params))
+            return _FakeResp()
+
+    p2 = pn.PoENinja.__new__(pn.PoENinja)
+    p2.logger = None
+    p2.session = _FakeSession()
+    rows = p2.get_currency("Standard")
+    call_url, call_params = p2.session.calls[0]
+    check("get_currency hits the current-overview path",
+          call_url == pn.POE2_BASE + "/exchange/current/overview")
+    check("get_currency sends league=/type= (not leagueName=/overviewName=)",
+          call_params == {"league": "Standard", "type": "Currency"})
+    check("get_currency still joins lines->items by id",
+          rows == [{"name": "Divine Orb", "value": 1.0, "volume": 42}])
 except Exception as e:
     print("poe_ninja err", e); traceback.print_exc()
 
