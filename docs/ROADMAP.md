@@ -26,15 +26,20 @@ and deliberately did not take.
 > confirmed on Windows (the sandbox has no GPU/EGL libraries) — the AST audit
 > exists precisely to cover that gap.
 
-## Gating work (must-haves before selling)
+## Gating work (must-haves before wide release)
+
+> Business model (2026-07-10): **free forever, exit = acquisition** — see
+> `docs/VISION_ACQUISITION.md` and `docs/GATING_RESEARCH.md` rev 2. Rows
+> below re-scoped accordingly.
 
 | Item | Status | Effort | Notes |
 |---|---|---|---|
 | Remove plaintext secrets fallback (fail closed) | ✅ DONE | — | `account_manager` now stores only in the OS keychain; if keyring is missing, saving is disabled (no plaintext file). |
 | Visible recording indicator + consent | ✅ DONE | — | Red “● REC” while recording; one-time consent dialog before first capture. |
 | Pin & audit dependencies | ◑ PARTIAL | low | Add a committed `requirements-lock.txt` (exact versions) and run `pip-audit` in CI. Floors are set; full lock pending so 3.13 wheels keep resolving. **Audited 2026-07-10** (`pip-audit -r requirements.txt`, Linux sandbox, resolves floors to current releases): **no known vulnerabilities**. The lock file itself must be generated on Windows (`pip freeze`) so it captures the wheels you actually run. |
-| Code-sign the Windows build | ☐ TODO | med ($) | Requires an Authenticode cert (~$100–400/yr) + signing in the build pipeline. Removes SmartScreen warnings. |
-| Per-site ToS / licensing review | ☐ TODO | med (legal) | Especially: poe2wiki is **CC BY-NC** (non-commercial) — redistributing it in a paid product needs review/relicensing. Confirm poe2db, poe.ninja, Craft of Exile commercial terms. |
+| Code-sign the Windows build | ☐ RECOMMENDED (not gating for a free tool) | low ($) | GATING_RESEARCH verdict: **Azure Artifact Signing, ~$9.99/mo**, individuals in the US eligible, no hardware token — kills the SmartScreen wall for adoption. Alternative: ship unsigned ($0, users click through the warning). Wire signtool into `make_release_zip.py` when adopted. |
+| Per-site ToS / licensing review | ◑ LARGELY RESOLVED for free distribution (2026-07-10) | low | GATING_RESEARCH rev 2: poe2db AND poe2wiki are CC BY-NC-SA — fine for a free tool with attribution + license notices (see new row below). Remaining: one outreach email to GGG (read-only scrape/embed blessing + OAuth client registration; also the acquisition opener) and friendly OK-checks with poe.ninja / Craft of Exile / FilterBlade. Paid-build analysis preserved in the doc's appendix. |
+| Data attribution + CC BY-NC-SA notices in-app (About/credits, README, installer) | ☐ TODO | low | Our actual compliance obligation as a free distributor of poe2db/poe2wiki data: credit the sources and surface the license notice. Good Feature-Worker routine task. |
 | Privacy policy | ✅ DONE 2026-07-10 | — | `docs/PRIVACY.md`: plain-words policy — local-first tables (incl. Craft Hunter's in-memory-only OCR crops), the exact when-and-what of AI-provider sends, fixed outbound host list, user controls/deletion. Still wants the pre-commercial legal review (tracked with the ToS row). |
 | Sandboxed file writes | ✅ DONE 2026-07-10 | — | All writes go under `data_engine/`; now formally documented in `docs/PRIVACY.md`'s local-first table (what lives where, incl. the `data_engine/` deletion instructions). |
 

@@ -9,6 +9,13 @@ Repo: https://github.com/castleism/Kalandra_Git
 
 ## [Unreleased]
 
+### Changed — 2026-07-10 gating table re-scoped for the free-forever decision
+- ROADMAP's gating table is now "must-haves before **wide release**" (was
+  "before selling"): code signing becomes optional-but-recommended (Azure
+  Artifact Signing ~$10/mo per `docs/GATING_RESEARCH.md`), the ToS/licensing
+  row is largely resolved for free distribution, and a new row tracks our
+  real obligation — data attribution + CC BY-NC-SA notices in-app.
+
 ### Added — 2026-07-10 Provider-boundary audit + `ItemInHand` seam migration (W4-00)
 - **`docs/PROVIDER_AUDIT.md`** (new) — the full sweep for provider-seam
   bypasses per `docs/VISION_ACQUISITION.md`'s architectural law: 6 open
