@@ -9,6 +9,77 @@ Repo: https://github.com/castleism/Kalandra_Git
 
 ## [Unreleased]
 
+### Added — 2026-07-10 acquisition dossier (docs/ACQUISITION_DOSSIER.md)
+- First build of the pitch-ready dossier: product inventory by pre-GGG
+  pillar with test-suite evidence, the post-GGG product page cross-checked
+  against `core_engine/providers.py`'s actual seam status (7 of 7
+  registered capabilities have a working adapter; character/progress
+  state has no seam at all — flagged as the biggest structural gap for
+  the "progress tracker" pitch), compliance posture with file:line
+  citations for the read-only guarantee and fail-closed secrets, an
+  honest per-pipeline integration-cost estimate, and TODO-marked traction
+  placeholders. Rebuilt from scratch each run by the
+  acquisition-dossier-maintainer routine; no prior version to diff
+  against yet.
+
+### Fixed — 2026-07-10 nightly CI hardening: pob_sim NaN crash + new adversarial suite
+- **`core_engine/pob_sim.py`** — `PoBSimulator.stats_summary()` crashed
+  (`ValueError: cannot convert float NaN to integer`) if the headless PoB
+  engine ever reported a non-finite `spirit_unreserved` value, since NaN is
+  truthy in Python and passed the existing `isinstance(...) and sun` guard
+  straight into `int(round(float(sun)))`. Now guarded with `math.isfinite()`
+  so a NaN/inf stat degrades to omitting the "(unreserved ..)" suffix
+  instead of crashing the summary line.
+- **`tests/pob_sim_checks.py`** (new, 55 checks) — first test coverage for
+  `core_engine/pob_sim.py` (previously zero): install-dir discovery across
+  every documented subdir layout (root/src/lua/runtime-lua), the
+  LuaJIT-vs-self-extracting-installer guard, every combination of
+  missing luajit/install/harness and their exact `availability_message()`
+  wording, fail-soft behavior with no subprocess ever spawned when
+  unavailable (`start`/`load_build_xml`/`get_stats`/`simulate`/`diag`/
+  `self_test`), `stats_summary` junk-proofing (non-numeric stats, the NaN
+  case above, the `spirit_unreserved == 0` vs falsy-string vs real-int
+  distinction), and thread-safety of the `_rpc` lock under 8 concurrent
+  callers. Found and fixed the NaN crash above.
+
+### Patch watch — 2026-07-10 Version 0.5.4 (poe2wiki)
+- poe2wiki's Version pages run through **0.5.4** (0.5.0, 0.5.0b, 0.5.1, 0.5.2,
+  0.5.3, 0.5.4 all exist), matching `database_handler.py`'s existing
+  `game_version_tag` default of `"Patch 0.5.4"`. The local knowledge ledger
+  had **zero** ingested pages before this run (fresh/empty `crawl_state` and
+  `knowledge_ledger`), so none of that patch history was actually minable —
+  ingested all six `Version 0.5.x` pages via the existing `WikiScraper`
+  handler and confirmed `nerf_intel.patches_from_db()` now returns all six,
+  oldest→newest.
+- The live PoE2 economy league is now **Runes of Aldur** (poe.ninja's
+  `index-state` endpoint), which also carries `passiveTree: PassiveTree-0.5`
+  vs. the prior league's `PassiveTree-0.4` — corroborates 0.5.0 as the last
+  major patch boundary.
+
+### Fixed — 2026-07-10 data-pipeline sentinel: poe.ninja endpoint moved + stale league list
+- **`core_engine/poe_ninja.py`** — poe.ninja rewrote its frontend (now
+  Astro-based) and moved the PoE2 currency endpoint from
+  `/currencyexchange/overview?leagueName=&overviewName=` to
+  `/exchange/current/overview?league=&type=`; the old path now 404s (cached
+  at Cloudflare's edge, so it fails silently and consistently rather than
+  timing out). Confirmed the new path + params by inspecting the live
+  economy page's own network calls. Response shape (top-level `items`/
+  `lines`) is unchanged, so `get_currency`'s parsing needed no changes —
+  only the URL and query param names. Added a regression check in
+  `tests/stress_test.py` (mocked session) that pins the URL and param names
+  so a silent revert is caught locally instead of live in the overlay.
+- **`gui_overlay/dashboard.py`** — the three Price Check / Exchange league
+  dropdowns still defaulted to `"Rise of the Abyssal"` / `"Dawn of the
+  Hunt"`, both now-ended leagues that 404 against the current API (empty
+  economy data for anyone who didn't retype the league name). Defaults
+  updated to `"Runes of Aldur"` / `"Standard"` / `"Hardcore"`.
+- Verified (live, single known-good page each, existing scrapers'
+  rate-limits/UA respected): `core_engine/scraper.py` against
+  `poe2db.tw/us/Divine_Orb` (title/text/version/links all extract
+  correctly) and `core_engine/wiki_scraper.py` against poe2wiki's
+  MediaWiki API on `Divine Orb` (API detection + `action=parse` text
+  extraction both clean). No changes needed for either.
+
 ### Added — 2026-07-10 W4-04 spec: character import & deep-scan
 - **`docs/CHARACTER_IMPORT_SPEC.md`** — house-style spec for "PoB import +
   character deep-scan," the next L-sized companion item with no spec yet.
