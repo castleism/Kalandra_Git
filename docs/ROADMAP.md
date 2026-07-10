@@ -4,6 +4,14 @@ Status of the security/compliance "gating work" identified in
 `docs/SECURITY_AND_PRIVACY.md`, the feature roadmap, and the routes we considered
 and deliberately did not take.
 
+> **North star (2026-07-10):** this roadmap is the **pre-GGG** track of
+> `docs/VISION_ACQUISITION.md` — build the pinnacle of PoE2 tooling from
+> public data, architected so every data pipeline can swap to direct game
+> integration on acquisition day. Hard rule that follows: **new data
+> sources go behind `core_engine/providers.py` seams**, with their post-GGG
+> swap plan recorded in the vision doc's pipeline matrix. The scheduled
+> worker routines that execute this roadmap live in `docs/ROUTINES.md`.
+
 > **Verified 2026-07-03** (Linux sandbox): all source files pass `py_compile`;
 > `tests/stress_test.py` passes **285/285** adversarial checks (was 111 on
 > 07-02 — theme/chrome geometry, GitHub sync, crafting planner, pricing

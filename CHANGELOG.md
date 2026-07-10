@@ -9,6 +9,24 @@ Repo: https://github.com/castleism/Kalandra_Git
 
 ## [Unreleased]
 
+### Added — 2026-07-10 company north star: acquisition vision + worker routines
+- **`docs/VISION_ACQUISITION.md`** — the thesis in writing: pre-GGG we
+  build the pinnacle of PoE2 tooling from public data; post-GGG the same
+  codebase becomes the official AI tutorial guide / progress tracker /
+  craft guide. The architectural law that follows: every game-data
+  ingestion point routes through a `core_engine/providers.py` seam with a
+  documented post-GGG swap plan — the doc carries the full pipeline
+  matrix (source → seam → swap), including the "(needs seam)" rows that
+  are now explicit debt. Honest hedge included: if the exit never comes,
+  executing the strategy still yields the best standalone product.
+- **`docs/ROUTINES.md`** — the staffing plan: eight standalone,
+  copy-paste prompts for scheduled Claude Code routines (feature worker,
+  nightly CI + test hardener, data sentinel/patch watcher,
+  provider-boundary auditor, game-file integration R&D, spec writer,
+  competitive intelligence, acquisition dossier maintainer), each
+  carrying its own orientation, house rules, ToS line, and verification
+  steps. ROADMAP header now points at both docs.
+
 ### Added — 2026-07-10 Reserve tab: read items straight from snapshots (W3-31 finished)
 - **"🔍 Read item from snapshot"** — pick a ruby-medallion screenshot in the
   Reserve tab's strip and Kalandra OCRs the tooltip into the editor (2x
