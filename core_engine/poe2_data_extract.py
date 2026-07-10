@@ -9,11 +9,16 @@ HONEST STATUS:
   * Detecting the install and locating the data bundles: implemented here.
   * Importing ALREADY-EXTRACTED data (a folder of .json / .csv produced by a
     community extractor) into the knowledge base: implemented here.
-  * Decompressing the raw bundles in-process: NOT implemented. PoE2 bundles use
-    Oodle compression, which has no pure-Python decoder. The reliable path is to
-    run an existing extractor once, then point this module at its output.
+  * Decompressing the raw bundles in-process: wired to `oodle_extractor.py`
+    via `extract_in_process()` / `auto_update()`. Confirmed working against a
+    real install (see that module's docstring) using the game's own oo2core
+    DLL if present, or a compatible one from any other installed Steam game.
+    When no install/DLL is found, this falls back to the external-converter
+    route below unchanged — nothing about that path is removed.
 
-RECOMMENDED EXTRACTOR (run once, then we import the result):
+RECOMMENDED EXTRACTOR (fallback when in-process extraction isn't ready,
+e.g. no compatible oo2core DLL found on this machine — run once, then we
+import the result):
   * SnowsMe / community "pathofexile-dat" tooling, or LibGGPK3 / Bundle tools.
   These produce per-table JSON (e.g. BaseItemTypes.json, SkillGems.json, Mods.json).
 Place the exported JSON files in:  data_engine/game_data/
@@ -26,8 +31,10 @@ import json
 
 try:
     from core_engine import dat_parser
+    from core_engine.oodle_extractor import OodleExtractor
 except Exception:
     import dat_parser  # when run directly from core_engine/
+    from oodle_extractor import OodleExtractor
 
 try:
     import requests
@@ -94,6 +101,35 @@ class PoE2DataExtractor:
 
     def extracted_files(self):
         return sorted(glob.glob(os.path.join(self.extracted_dir(), "*.json")))
+
+    # ----------------------------------------------------------------------
+    # In-process extraction (no external converter) — confirmed working
+    # end-to-end against a real install; see oodle_extractor.py docstring.
+    # ----------------------------------------------------------------------
+    def in_process_status(self):
+        """Can we self-extract .datc64 tables without an external converter?"""
+        ex = OodleExtractor(logger=self.logger)
+        return ex.status()
+
+    def extract_in_process(self, tables=None, out_dir=None):
+        """Pull .datc64 tables straight from the install via OodleExtractor,
+        skipping the external-converter step entirely. Returns the same
+        {"written": [...], "missing": [...]} shape as OodleExtractor.extract_tables,
+        or {"written": [], "missing": tables, "reason": ...} if not ready
+        (no install found, no oo2core DLL located, etc.)."""
+        ex = OodleExtractor(logger=self.logger)
+        st = ex.status()
+        tables = tables or DEFAULT_TABLES
+        if not st["ready"]:
+            reason = ("no PoE2 install found" if not st["install"] else
+                       "no Oodle DLL located" if not st["oo2core_dll"] else
+                       "Bundles2/_.index.bin not found")
+            self._log(f"In-process extraction skipped: {reason}.")
+            return {"written": [], "missing": list(tables), "reason": reason}
+        result = ex.extract_tables(tables, out_dir or self.datc64_dir())
+        self._log(f"In-process extraction: wrote {len(result['written'])}, "
+                  f"missing {len(result['missing'])}.")
+        return result
 
     def import_extracted_dir(self):
         """Import already-extracted per-table JSON into the knowledge base.
@@ -353,13 +389,22 @@ class PoE2DataExtractor:
             "recognized_tables": recognized,
             "last_imported_rows": st.get("rows", 0),
             "needs_import": needs_import,
+            "in_process": self.in_process_status(),
         }
 
     def auto_update(self, force=False):
-        """Run on boot: import extracted data if it's new (or game changed)."""
+        """Run on boot: import extracted data if it's new (or game changed).
+
+        If no .datc64/JSON has been dropped in yet but in-process extraction
+        is ready (real install + oo2core DLL located), self-extract the
+        default tables first — no external converter needed."""
         s = self.scan()
         if s["extracted_files"] == 0:
-            return {"status": "no-data", "scan": s}
+            if s["in_process"]["ready"]:
+                self.extract_in_process()
+                s = self.scan()
+            if s["extracted_files"] == 0:
+                return {"status": "no-data", "scan": s}
         if not (force or s["needs_import"] or s["game_changed"]):
             return {"status": "up-to-date", "scan": s}
         n = self.import_datc64_dir()

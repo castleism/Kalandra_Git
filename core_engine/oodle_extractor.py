@@ -3,11 +3,21 @@ CORE_ENGINE/OODLE_EXTRACTOR.PY
 In-process extraction of PoE2 game data: decompress the game's Oodle bundles
 using the game's OWN oo2core DLL (via ctypes) -- nothing is redistributed.
 
-STATUS: EXPERIMENTAL. The bundle/index binary format and Oodle calling
-convention are implemented from public documentation, but I can't validate this
-without the real game files + DLL on a Windows machine. The `self_test()` method
-reports exactly which steps work so it can be fixed iteratively. Until it passes,
-use the external-converter route (docs/EXTRACTOR_SETUP.md).
+STATUS: CONFIRMED WORKING end-to-end on a real Windows install (index parse,
+path recovery, bundle decompression, byte-exact table extraction all verified
+against live game files — see tests/extractor_checks.py for the synthetic
+fixtures that pin the formats down, plus a manual real-install run that
+extracted BaseItemTypes/Mods/SkillGems/Stats/Tags cleanly). One real-world
+wrinkle already seen: PoE2 doesn't always ship its own oo2core_*.dll at the
+install root, so `find_oo2core`'s sibling-Steam-game fallback (any other
+installed game that happens to ship a compatible oo2core build) matters in
+practice, not just in theory. Caveats that remain: only validated on one
+install/game version so far, and the hash-strategy auto-detect
+(`_hash_candidates`) picks whichever candidate matches best per game build —
+that's untested against a build where the winning strategy differs. The
+`self_test()` method reports exactly which steps work so problems are
+diagnosable per-install. The external-converter route (docs/EXTRACTOR_SETUP.md)
+remains the documented fallback when this path isn't ready on a given machine.
 
 Design:
   * locate the install + oo2core_*.dll

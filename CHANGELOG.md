@@ -9,25 +9,61 @@ Repo: https://github.com/castleism/Kalandra_Git
 
 ## [Unreleased]
 
-### Fixed — 2026-07-10 nightly CI hardening: pob_sim NaN crash + new adversarial suite
-- **`core_engine/pob_sim.py`** — `PoBSimulator.stats_summary()` crashed
-  (`ValueError: cannot convert float NaN to integer`) if the headless PoB
-  engine ever reported a non-finite `spirit_unreserved` value, since NaN is
-  truthy in Python and passed the existing `isinstance(...) and sun` guard
-  straight into `int(round(float(sun)))`. Now guarded with `math.isfinite()`
-  so a NaN/inf stat degrades to omitting the "(unreserved ..)" suffix
-  instead of crashing the summary line.
-- **`tests/pob_sim_checks.py`** (new, 55 checks) — first test coverage for
-  `core_engine/pob_sim.py` (previously zero): install-dir discovery across
-  every documented subdir layout (root/src/lua/runtime-lua), the
-  LuaJIT-vs-self-extracting-installer guard, every combination of
-  missing luajit/install/harness and their exact `availability_message()`
-  wording, fail-soft behavior with no subprocess ever spawned when
-  unavailable (`start`/`load_build_xml`/`get_stats`/`simulate`/`diag`/
-  `self_test`), `stats_summary` junk-proofing (non-numeric stats, the NaN
-  case above, the `spirit_unreserved == 0` vs falsy-string vs real-int
-  distinction), and thread-safety of the `_rpc` lock under 8 concurrent
-  callers. Found and fixed the NaN crash above.
+### Added — 2026-07-10 Photo item scanner: AI vision + unified OCR (W3-33 finished)
+- **`core_engine/photo_scanner.py`** — pick ANY item screenshot (Price
+  Check's "Scan screenshot…") and Kalandra reads it into the same
+  `parse_item_text` pipeline Ctrl+C uses, two engines, best available wins.
+  AI vision goes first when the user's already-configured AI brain has a
+  key: `VoiceEngine.ai_read_image` sends the image straight to
+  OpenAI/Anthropic/Gemini (new per-provider vision calls alongside the
+  existing text-chat ones) with a strict "transcribe exactly, invent
+  nothing" prompt — far more accurate than OCR on PoE2's stylized fonts, at
+  a fraction of a cent per scan. Offline OCR (Craft Hunter's shared
+  RapidOCR/Tesseract adapters, 2x upscale) is the free, no-key fallback and
+  the sole engine when no AI brain is configured — replacing the old
+  ad-hoc Tesseract-only v1 that had quietly shipped in the button without a
+  matching ROADMAP/CHANGELOG entry.
+- Wiring: `VoiceEngine.ai_read_image(path, instruction)` is a synchronous
+  call (same convention as `ai_respond`); the overlay exposes it as
+  `ai_image_reader`, threaded down through `KalandraDashboard` to
+  `PriceCheckTab` exactly like the existing `ask_ai` text callback, so
+  core_engine never opens a socket on its own and the AI brain stays
+  centralized in one module.
+- `tests/photo_scan_checks.py` (28 checks) — engine ordering/fallback,
+  missing/corrupt-file handling, and the 2x upscale helper, all exercised
+  by injecting a fake AI-vision callable and a monkeypatched OCR adapter
+  (this sandbox has neither RapidOCR, Tesseract, nor an API key installed);
+  no network calls, no Qt.
+
+### Added — 2026-07-10 Game-file R&D: in-process Oodle extraction confirmed + wired
+- **`core_engine/oodle_extractor.py`** validated end-to-end on a real PoE2
+  install: index parse, path recovery (base+fragment string reconstruction),
+  hash-strategy auto-detection, bundle decompression, and byte-exact table
+  extraction all confirmed working (BaseItemTypes, Mods, SkillGems, Stats,
+  Tags extracted cleanly). Real-world finding folded back into the docstring:
+  PoE2 doesn't always ship its own `oo2core_*.dll` at the install root, so the
+  sibling-Steam-game DLL fallback isn't just theoretical — it's what made
+  this run's extraction possible.
+- **`core_engine/poe2_data_extract.py`** — wired `OodleExtractor` in via new
+  `in_process_status()` / `extract_in_process()`; `scan()` now reports
+  in-process readiness and `auto_update()` self-extracts before falling back
+  to "wait for externally-dropped files" — the external-converter path is
+  unchanged and stays as the fallback when no compatible install/DLL is
+  found on a machine.
+- **`tests/extractor_checks.py`** (new, 42 checks) — fixture-based coverage
+  for the whole pipeline using only synthetic data (no real game files
+  committed): every `dat_parser` scalar/array type incl. NULL-key
+  foreignrows, the boundary-magic and schema-width guards, a full synthetic
+  `.datc64`+bundle+index round-trip through `OodleExtractor` (Oodle codec
+  itself stubbed identity — the one piece that needs the real proprietary
+  DLL), and the new `poe2_data_extract` wiring with a fake `OodleExtractor`
+  for determinism across machines.
+- Docs updated: `docs/EXTRACTOR_SETUP.md` now leads with the in-process path
+  and demotes the external converter to documented fallback;
+  `docs/ROADMAP.md`'s "Game-file data extraction" row reflects the
+  confirmed-working status and what's still open (schema-driven column
+  parsing needs a network-fetched `schema.min.json` to validate against real
+  tables; only tested on one install/game version so far).
 
 ### Added — 2026-07-10 acquisition dossier (docs/ACQUISITION_DOSSIER.md)
 - First build of the pitch-ready dossier: product inventory by pre-GGG
