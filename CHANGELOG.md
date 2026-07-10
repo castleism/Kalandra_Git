@@ -9,6 +9,38 @@ Repo: https://github.com/castleism/Kalandra_Git
 
 ## [Unreleased]
 
+### Added — 2026-07-10 Craft Hunter P1 (CH-P1, spec: docs/CRAFT_HUNTER_SPEC.md)
+- **Craft Hunter tab** (🔨 Crafting) — the alert-only crafting mod sniper's
+  first phase. Build a list of target mod rolls ("#% increased Spell
+  Damage, 95+"): autocomplete fed from `localized_knowledge.db` plus a
+  curated template list (free text welcome), inclusive min/max on the
+  first `#` slot, hybrid multi-line targets in the engine, stop-on-ANY or
+  stop-on-ALL semantics, arm/disarm with a status lamp, session
+  confirms/hits counters.
+- **In-game stash-search regex, generated live** — the target list compiles
+  to the game's own search dialect (`"..."` quoting, `|` alternation, no
+  groups) under the hard 50-character budget, numeric ranges unrolled
+  (95+ → `spell dam.*9[5-9]|spell dam.*[1-9]\d\d`) so the GAME dims the tab
+  and lights the hit — zero external detection. When the budget forces
+  cuts, the degradation is honest and reported next to the box (ranges
+  dropped first, then anchors shortened, then targets — never silently).
+- **Clipboard confirm (authoritative)** — while the hunt is armed, every
+  in-game Ctrl+C over an item runs through the same
+  `trade_tools.parse_item_text` clipboard the W3-20 price popup uses and
+  is checked against the targets: green "⛔ TARGET HIT — STOP" toast by
+  the cursor (plus a beep) or a quiet red "keep going", mirrored in the
+  tab with per-target verdicts. While armed, the confirm replaces the
+  price popup (you're spamming orbs, not pricing). Compliance line
+  unchanged and hard (spec §2): we read what the game writes; **no input
+  is ever intercepted, suppressed, or sent** — the alarm informs the
+  human, the human does every click.
+- `core_engine/craft_hunter.py` is pure logic (no Qt, no network, no OCR),
+  with an OCR-noise-tolerant fuzzy fallback already in the matcher so P2's
+  tooltip watcher bolts onto the same engine. `tests/craft_checks.py` —
+  78 checks (template matching, ranges, any/all, hybrids, exhaustive
+  numeric-range unrolling, budget degradation, clipboard round trip,
+  junk-proofing), all green.
+
 ### Added — 2026-07-05 Death Review (W4-21, first slice of the W4-10 OBS suite)
 - **"Why did I die?"** — PoE2's log never says what hit you, so Kalandra
   assembles the answer: the overlay tails `Client.txt` while the game runs

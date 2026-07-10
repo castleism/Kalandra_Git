@@ -169,6 +169,19 @@ ToS note (unchanged, hard rule): W3-20 reads the clipboard that the game
 itself populates on Ctrl+C. No input is ever sent to the game; every buy,
 whisper, and click in game is the player's.
 
+## Feature Wave 5 — Craft Hunter (spec: `docs/CRAFT_HUNTER_SPEC.md`)
+
+> Alert-only crafting mod sniper (spec written 2026-07-06). Hard rule from
+> the spec (§2), same as everywhere else in Kalandra: **no input
+> interception, ever** — we read what the game shows/writes, we never touch
+> the game. The alarm informs the human; the human does every click.
+
+| ID | Item | Status | Size | Notes |
+|---|---|---|---|---|
+| CH-P1 | Regex helper: target-mod list UI (autocomplete from `localized_knowledge.db` + curated templates), in-game stash-search regex generator (PoE dialect, ≤50 chars, honest budget degradation), clipboard-confirm HIT / keep-going wired into the W3-20 watcher | ✅ SHIPPED 2026-07-10 | M | `core_engine/craft_hunter.py` (pure engine, OCR-noise-tolerant matcher ready for P2) + `gui_overlay/craft_hunter.py` (tab in 🔨 Crafting + cursor toast); armed hunts replace the price popup. `tests/craft_checks.py` (78) all green. |
+| CH-P2 | OCR watcher: one-time tooltip crop calibration, hash-skip capture loop, RapidOCR (optional import, pytesseract fallback), full-screen click-through flash + loud sound + F8 arm hotkey | ☐ TODO | L | Detection layer only — the P1 clipboard confirm stays the authoritative keep/continue verdict. |
+| CH-P3 | Polish: session stats → grind_tracker (orbs-per-hit), per-target sounds, essence/omen-aware hints from `offline_craft_guidance`, near-miss soft chime | ☐ TODO | M | Spec §9/§10. |
+
 ## In progress / partial
 
 | Item | Status |

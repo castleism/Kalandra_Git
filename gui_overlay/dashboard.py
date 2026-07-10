@@ -2470,6 +2470,7 @@ DASHBOARD_TABS = [
     ("Trade Site", True),
     ("Exchange", True),
     ("Crafting", True),
+    ("Craft Hunter", True),
     ("Filter Editor", True),
     ("Live Search", True),
     ("Grind Tracker", True),
@@ -2488,7 +2489,7 @@ TAB_GROUPS = [
                            "PoE Overlay 2", "Death Review"]),
     ("💰 Items & Trading", ["Price Check", "Trade Site", "Live Search",
                              "Exchange", "Reserve / BIS", "poe.ninja"]),
-    ("🔨 Crafting", ["Crafting", "Craft of Exile"]),
+    ("🔨 Crafting", ["Crafting", "Craft Hunter", "Craft of Exile"]),
     ("📊 Loot & Filters", ["Filter Editor", "FilterBlade", "Grind Tracker"]),
     ("🛠 Other", []),
 ]
@@ -2730,6 +2731,15 @@ class KalandraDashboard(KalandraFrameWindow):
             except Exception as e:
                 self.tabs.addTab(_placeholder("Crafting Planner", [f"Unavailable: {e}"]),
                                  "Crafting")
+        if self._tab_on("Craft Hunter"):
+            try:
+                from gui_overlay.craft_hunter import CraftHunterTab
+                self._craft_hunter_tab = CraftHunterTab(config=self.config)
+                self.tabs.addTab(self._craft_hunter_tab, "Craft Hunter")
+            except Exception as e:
+                self.tabs.addTab(_placeholder("Craft Hunter",
+                                              [f"Unavailable: {e}"]),
+                                 "Craft Hunter")
         if self._tab_on("Filter Editor"):
             try:
                 self.tabs.addTab(FilterEditorTab(), "Filter Editor")
@@ -2974,6 +2984,17 @@ class KalandraDashboard(KalandraFrameWindow):
             self.ask_ai(prompt, _on_reply)
         except Exception as e:
             self._bridge.buildsim_text.emit(f"Upgrade guidance failed: {e}")
+
+    def notify_craft_confirm(self, res, raw_text=""):
+        """Used by the overlay's clipboard watcher (CH-P1): an armed in-game
+        Ctrl+C was checked against the hunt targets — show the verdict in the
+        Craft Hunter tab (the cursor-side toast is the overlay's job)."""
+        tab = getattr(self, "_craft_hunter_tab", None)
+        if tab is not None:
+            try:
+                tab.on_clipboard_result(res, raw_text)
+            except Exception:
+                pass
 
     def prefill_price_check(self, item_text):
         """Used by the clipboard price popup (W3-20): open the Price Check tab
