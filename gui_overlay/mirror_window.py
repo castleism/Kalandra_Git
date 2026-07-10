@@ -664,6 +664,18 @@ if PYQT_AVAILABLE:
             tb = QPushButton("Trade ↗")
             from core_engine.trade_tools import trade_search_url
             url = trade_search_url(info, league)
+            # W3-21: pre-fill the query when the stat map is already cached
+            # (the Price Check tab warms it); plain search URL otherwise.
+            try:
+                from gui_overlay.dashboard import _trade_stats_index
+                from core_engine.trade_tools import (build_trade_query,
+                                                     trade_query_url)
+                idx = _trade_stats_index()
+                if idx:
+                    qy, _m, _t, _n = build_trade_query(info, idx)
+                    url = trade_query_url(qy, league)
+            except Exception:
+                pass
             tb.clicked.connect(lambda: (QDesktopServices.openUrl(QUrl(url)),
                                         self.close()))
             row.addWidget(tb)

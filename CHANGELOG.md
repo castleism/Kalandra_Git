@@ -9,6 +9,24 @@ Repo: https://github.com/castleism/Kalandra_Git
 
 ## [Unreleased]
 
+### Added — 2026-07-10 Price Check v3: searches open with the item's filters pre-filled (W3-21 finished)
+- "Open trade search" no longer lands you on a blank search page: Kalandra
+  now builds the trade site's own query JSON from the parsed item and opens
+  `…/search/poe2/<league>?q=<json>` — name+base for uniques, base type for
+  rares, and every mod that maps to one of the site's stat ids as a filter.
+  **Premium/good mods arrive enabled at your rolls** ("at least as good as
+  mine"; two-slot rolls like `Adds 12 to 24` filter by their average, the
+  site's convention), the rest ride along disabled — one click to enable
+  instead of hunting the stat dropdown. Unmapped mods are counted and named
+  honestly in the summary.
+- The stat-id map comes from the site's `/api/trade2/data/stats` (the same
+  fixed-host rule as all outbound calls), fetched once in the background and
+  cached a week in `data_engine/trade_stats_poe2.json`; its `[A|B]` text
+  markup is normalized so clipboard lines and site stats meet in the middle.
+  Until the map is cached, everything falls back to the plain search URL and
+  says so. The clipboard price popup's "Trade ↗" gets the same upgrade for
+  free. `tests/trade_query_checks.py` — 35 checks, all green.
+
 ### Added — 2026-07-10 gating work: privacy policy + dependency audit
 - **`docs/PRIVACY.md`** — the plain-words privacy policy the gating table
   called for: everything is local-first (tables of what lives where,

@@ -90,9 +90,158 @@ def trade_search_url(info, league):
     """The official PoE2 trade search page for a league. The site needs a POST to
     prefill a query, so we open the search page for the right league; the parsed
     item name/base is shown to the user to type/confirm. Guarantees correct site
-    and league with zero automation."""
+    and league with zero automation. (W3-21's ?q= prefill below upgrades this
+    whenever the stat-id map is available.)"""
     league = (league or "Standard").strip() or "Standard"
     return f"https://www.pathofexile.com/trade2/search/poe2/{quote(league)}"
+
+
+# ---------------------------------------------------------------------------
+# W3-21 (remaining half): push the parsed item's filters INTO the trade site.
+# The official site accepts ?q=<query JSON> on the search URL; the stat-id map
+# comes from its /api/trade2/data/stats endpoint (fetched + cached by the GUI
+# layer — this module stays pure: build/match only, no network).
+# ---------------------------------------------------------------------------
+
+_STAT_MARKUP = None      # compiled lazily (keeps import cost nil)
+_NUMBER = None
+
+
+def normalize_stat_text(text):
+    """One canonical shape for a stat/mod line so the site's stat texts and
+    the game's clipboard lines can meet in the middle:
+    - trade-API markup `[Evasion|Evasion Rating]` -> the display half,
+      `[Physical]` -> itself
+    - every number (and the API's `#` placeholder) -> `#`
+    - `+#` collapses to `#` (the sign is cosmetic), whitespace collapsed,
+      lowercased."""
+    import re
+    global _STAT_MARKUP, _NUMBER
+    if _STAT_MARKUP is None:
+        _STAT_MARKUP = re.compile(r"\[([^\[\]|]+)\|([^\[\]]+)\]")
+        _NUMBER = re.compile(r"[+-]?\d+(?:\.\d+)?|#")
+    s = str(text or "")
+    s = _STAT_MARKUP.sub(r"\2", s)
+    s = s.replace("[", "").replace("]", "")
+    s = _NUMBER.sub("#", s)
+    s = s.replace("+#", "#").replace("+ #", "#")
+    return " ".join(s.split()).strip().lower()
+
+
+def mod_values(mod):
+    """The numbers on a concrete mod line, in order (floats)."""
+    import re
+    return [float(x) for x in re.findall(r"[+-]?\d+(?:\.\d+)?",
+                                         str(mod or ""))]
+
+
+def build_stats_index(stats_json):
+    """{normalized stat text -> stat id} from /api/trade2/data/stats.
+
+    Explicit entries win collisions (they're what rare-item searches use);
+    implicit/rune/enchant fill gaps. Returns {} for anything malformed —
+    the caller falls back to the plain search URL."""
+    index = {}
+    try:
+        groups = (stats_json or {}).get("result") or []
+        ranked = {"explicit": 0, "implicit": 1, "rune": 2, "enchant": 3}
+        best_rank = {}
+        for g in groups:
+            for e in (g.get("entries") or []):
+                sid = e.get("id")
+                text = normalize_stat_text(e.get("text"))
+                etype = str(e.get("type") or g.get("id") or "").lower()
+                rank = ranked.get(etype, 9)
+                if sid and text and rank < best_rank.get(text, 99):
+                    best_rank[text] = rank
+                    index[text] = sid
+    except Exception:
+        return {}
+    return index
+
+
+def match_stat_id(index, mod, fuzz=0.92):
+    """The stat id for one clipboard mod line: exact normalized match first,
+    then a difflib pass over the index (>= fuzz). None if nothing fits."""
+    if not index:
+        return None
+    key = normalize_stat_text(mod)
+    if not key:
+        return None
+    hit = index.get(key)
+    if hit:
+        return hit
+    import difflib
+    cand = difflib.get_close_matches(key, list(index.keys()), n=1,
+                                     cutoff=fuzz)
+    return index[cand[0]] if cand else None
+
+
+def build_trade_query(info, stats_index, online=True):
+    """The trade-site query JSON for a parsed item (W3-21).
+
+    - Uniques search by name + base; everything else by base type.
+    - Every parsed mod that maps to a stat id becomes a filter with
+      min = its rolled value ("at least as good as mine"); premium/good
+      mods (mod_insights tiers) ship ENABLED, the rest disabled so they're
+      one click away on the site instead of drowning the search.
+    Returns (query_dict, matched, total, notes). Never raises."""
+    info = info or {}
+    notes = []
+    q = {"query": {"status": {"option": "online" if online else "any"},
+                   "stats": [{"type": "and", "filters": []}]},
+         "sort": {"price": "asc"}}
+    try:
+        rarity = (info.get("rarity") or "").lower()
+        name, base = info.get("name") or "", info.get("base") or ""
+        if rarity == "unique" and name:
+            q["query"]["name"] = name
+            if base:
+                q["query"]["type"] = base
+        elif base:
+            q["query"]["type"] = base
+        elif name:
+            q["query"]["type"] = name
+
+        tiers = {}
+        try:
+            for m, tier, _tip in mod_insights(info)["mods"]:
+                tiers[m] = tier
+        except Exception:
+            pass
+        filters = []
+        mods = info.get("mods") or []
+        matched = 0
+        for m in mods:
+            sid = match_stat_id(stats_index, m)
+            if not sid:
+                continue
+            matched += 1
+            f = {"id": sid,
+                 "disabled": tiers.get(m) not in ("premium", "good")}
+            vals = mod_values(m)
+            if len(vals) >= 2:
+                # two-slot rolls ("Adds 12 to 24 ...") filter by their
+                # AVERAGE on the trade site
+                f["value"] = {"min": round((vals[0] + vals[1]) / 2.0, 1)}
+            elif vals:
+                f["value"] = {"min": vals[0]}
+            filters.append(f)
+        q["query"]["stats"][0]["filters"] = filters
+        if matched < len(mods):
+            notes.append(f"{len(mods) - matched} mod(s) had no stat-id "
+                         "match — add them on the site if they matter.")
+        return q, matched, len(mods), notes
+    except Exception as e:
+        return q, 0, len(info.get("mods") or []), [f"query build error: {e}"]
+
+
+def trade_query_url(query, league):
+    """Search URL with the query prefilled via ?q= (the site reads it)."""
+    import json
+    league = (league or "Standard").strip() or "Standard"
+    return (f"https://www.pathofexile.com/trade2/search/poe2/{quote(league)}"
+            f"?q={quote(json.dumps(query, separators=(',', ':')))}")
 
 
 def live_search_url(league):

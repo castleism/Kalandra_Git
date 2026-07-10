@@ -1727,17 +1727,80 @@ class ExchangeTab(QWidget):
             self.table.setItem(i, 2, QTableWidgetItem(vol_s))
 
 
+# W3-21 (remaining half): the trade site's stat-id map, so 'Open trade
+# search' can pre-fill the parsed item's filters via ?q=<query JSON>.
+# Memory -> week-old disk cache -> ONE background fetch; callers always get a
+# dict and fall back to the plain URL while it's empty. Same fixed-host rule
+# as everything else (pathofexile.com, descriptive UA, timeout).
+_TRADE_STATS = {"index": None, "fetching": False}
+_TRADE_STATS_CACHE = "data_engine/trade_stats_poe2.json"
+
+
+def _trade_stats_index():
+    import os
+    idx = _TRADE_STATS["index"]
+    if idx is not None:
+        return idx
+    try:                                       # fresh-enough disk cache?
+        import json as _json
+        import time as _time
+        if (os.path.exists(_TRADE_STATS_CACHE)
+                and _time.time() - os.path.getmtime(_TRADE_STATS_CACHE)
+                < 7 * 86400):
+            with open(_TRADE_STATS_CACHE, "r", encoding="utf-8") as f:
+                data = _json.load(f)
+            from core_engine.trade_tools import build_stats_index
+            idx = build_stats_index(data)
+            if idx:
+                _TRADE_STATS["index"] = idx
+                return idx
+    except Exception:
+        pass
+    if not _TRADE_STATS["fetching"]:
+        _TRADE_STATS["fetching"] = True
+
+        def _work():
+            try:
+                import json as _json
+                import requests
+                r = requests.get(
+                    "https://www.pathofexile.com/api/trade2/data/stats",
+                    headers={"User-Agent":
+                             "KalandraOverlay/0.1 "
+                             "(github.com/castleism/Kalandra_Git)"},
+                    timeout=25)
+                if r.ok:
+                    data = r.json()
+                    from core_engine.trade_tools import build_stats_index
+                    idx2 = build_stats_index(data)
+                    if idx2:
+                        _TRADE_STATS["index"] = idx2
+                        os.makedirs("data_engine", exist_ok=True)
+                        with open(_TRADE_STATS_CACHE, "w",
+                                  encoding="utf-8") as f:
+                            _json.dump(data, f)
+            except Exception:
+                pass
+            finally:
+                _TRADE_STATS["fetching"] = False
+        threading.Thread(target=_work, daemon=True).start()
+    return {}
+
+
 class PriceCheckTab(QWidget):
     """Paste an item copied from the game (Ctrl+C in-game) and Kalandra parses it
     and opens the matching search on the OFFICIAL PoE2 trade site. No automated
     buying, no price fabrication — you read real listings yourself, per GGG ToS.
-    W3-22: searches can be saved by name and re-run any time."""
+    W3-22: searches can be saved by name and re-run any time.
+    W3-21: when the stat-id map is cached, the search opens with the item's
+    filters already in the query (premium/good mods enabled at their rolls)."""
 
     def __init__(self, parent=None, config=None):
         super().__init__(parent)
         self.config = config if isinstance(config, dict) else {}
         self._build_ui()
         self._reload_saved()
+        _trade_stats_index()          # warm the stat map in the background
 
     def _build_ui(self):
         root = QVBoxLayout(self)
@@ -1907,6 +1970,33 @@ class PriceCheckTab(QWidget):
     def _open_trade(self):
         league = (self.league.currentText() or "Standard").strip()
         url = _trade_search_url(self._parsed or {}, league)
+        # W3-21: pre-fill the query when the stat map is ready; plain search
+        # page otherwise (and the map keeps downloading for next time).
+        try:
+            idx = _trade_stats_index()
+            if idx and self._parsed:
+                from core_engine.trade_tools import (build_trade_query,
+                                                     trade_query_url)
+                qy, matched, total, notes = build_trade_query(self._parsed,
+                                                              idx)
+                url = trade_query_url(qy, league)
+                note = (f"Search opened with filters pre-filled: "
+                        f"{matched}/{total} mods mapped to trade stats "
+                        "(premium/good enabled at your rolls, the rest one "
+                        "click away).")
+                if notes:
+                    note += " " + " ".join(notes)
+                self.summary.setHtml(
+                    self.summary.toHtml()
+                    + f"<br><span style='color:#8fd6a0;'>{note}</span>")
+            elif self._parsed and (self._parsed.get("mods")):
+                self.summary.setHtml(
+                    self.summary.toHtml()
+                    + "<br><span style='color:#9aa4b2;'>Stat map still "
+                    "downloading — plain search this time; filters will "
+                    "pre-fill once it's cached.</span>")
+        except Exception:
+            pass
         # The search opens in the dedicated Trade Site tab (full-size browser)
         # — the dashboard injects open_trade_site and switches tabs. External
         # browser only as a fallback when the tab isn't available.
