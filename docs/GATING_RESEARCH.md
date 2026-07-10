@@ -3,8 +3,15 @@
 *Researched 2026-07-10 via a 102-agent verified-research pass (5 search
 angles, 20 sources fetched, 94 claims extracted, 25 adversarially verified:
 23 confirmed / 2 refuted-and-excluded). Everything below cites primary
-sources. This is research, not legal advice — the licensing section in
-particular needs counsel before a commercial launch.*
+sources. This is research, not legal advice.*
+
+> **Rev 2 (2026-07-10, same day):** Christian set the business model —
+> **Kalandra is free forever; the exit is acquisition, not sales**
+> (recorded in `docs/VISION_ACQUISITION.md`). The verified facts below are
+> unchanged, but the implications flip substantially in our favor, so each
+> section now leads with the free-distribution reading. The paid-product
+> analysis is kept as clearly-marked appendix guidance in case the stance
+> ever changes.*
 
 ---
 
@@ -34,14 +41,21 @@ particular needs counsel before a commercial launch.*
   [MS blog](https://techcommunity.microsoft.com/blog/microsoft-security-blog/trusted-signing-is-now-open-for-individual-developers-to-sign-up-in-public-previ/4273554) ·
   [FAQ](https://learn.microsoft.com/en-us/azure/artifact-signing/faq)
 
-**Recommendation:** sign with Artifact Signing Basic (~$120/yr) instead of
-an OV/EV certificate. Wire `signtool` + the Trusted Signing dlib into
-`scripts/make_release_zip.py`'s pipeline. **Unverified residue:** exact
-2026 OV/EV price cards (SSL.com/Certum/Sectigo/DigiCert) and per-option
-SmartScreen reputation behavior didn't survive verification — irrelevant
-if we take the Azure path, revisit only if eligibility fails.
+**Free-tool framing:** signing is about the SmartScreen "unknown
+publisher" wall, not about selling — free tools face it identically, and
+there is no $0 Authenticode path for closed-source software. Options:
+(a) **ship unsigned — $0** — every new user clicks through the blue
+SmartScreen warning; acceptable for early adopters, real friction against
+"the tool the whole community installs"; (b) **Artifact Signing Basic,
+~$120/yr** — the cheapest clean install experience, recommended once
+adoption is the goal; (c) **open-source the repo** → SignPath's free OSS
+signing becomes available. This row is now *recommended-not-gating* for a
+free release. If/when signed: wire `signtool` + the Trusted Signing dlib
+into `scripts/make_release_zip.py`. **Unverified residue:** exact 2026
+OV/EV price cards and per-option SmartScreen reputation behavior didn't
+survive verification — irrelevant unless the Azure path fails.
 
-## 2. Licensing: the knowledge base is the blocker — and the strategy already contains the fix
+## 2. Licensing: mostly RESOLVED by the free-forever decision
 
 **Verified (all 3–0):**
 
@@ -70,29 +84,44 @@ if we take the Azure path, revisit only if eligibility fails.
   [ToU](https://www.pathofexile.com/legal/terms-of-use-and-privacy-policy) ·
   [dev docs](https://www.pathofexile.com/developer/docs)
 
-**What this means for the two roadmaps:**
+**What this means for a FREE Kalandra (the active plan):**
 
-1. **The paid product cannot bundle the scraped knowledge base.** Options,
-   best first: (a) **game-file extraction on the user's own install**
-   (`dat_parser`/`oodle_extractor` path) — the user reads their own copy
-   locally, nothing redistributed by us; this is already the post-GGG
-   pipeline prototype, so the acquisition architecture and the licensing
-   fix are the *same work* — priority of the Game-File R&D routine just
-   went up. (b) User-initiated local scraping for personal use (ship the
-   scraper, not the data — the NC license binds *our redistribution*, not
-   what a user does personally; still gray, ask counsel). (c) Written
-   permission from GGG/the wikis — the ToU's "without prior written
-   approval" carve-out makes direct contact a real path, and it doubles
-   as an acquisition conversation opener.
-2. **The embedded Trade Site tab needs review before a paid release** —
-   either GGG's written approval or degrade it to "open in browser" in
-   the commercial build (the W3-21 prefilled URLs work either way).
-3. Purely factual game numbers *may* be uncopyrightable in some
-   jurisdictions — a narrowing argument, not a plan; counsel question.
-4. **Unverified residue:** poe.ninja's commercial-API terms and
-   craftofexile/filterblade embedding policies produced no verifiable
-   claims — treat as unknown, ask the operators directly (all three are
-   one-person/small teams that answer email).
+1. **Bundling the scraped knowledge base is broadly permitted.** CC
+   BY-NC-SA's NonCommercial clause targets uses "primarily intended for
+   commercial advantage or monetary compensation" — a free community tool
+   is the standard permitted case. Compliance obligations we DO take on:
+   **attribution + license notice** (credit poe2db/poe2wiki and surface
+   the CC BY-NC-SA notice in the app's About/credits and the README —
+   new gating row), and ShareAlike applies to the *data*, which is fine
+   since we redistribute it as-is in the DB, not relicensed.
+2. **GGG's ToS clauses apply regardless of price** — the scraping and
+   framing prohibitions are about pathofexile.com access, not money. Two
+   asks in one email to GGG: blessing for the read-only scrape/embed
+   patterns, and OAuth client registration (§3). This is also the
+   acquisition relationship opener. Until answered, the embedded Trade
+   Site tab is tolerated-risk (the ecosystem precedent: GGG has left
+   similar tools alone for years) — an "open in browser" fallback exists
+   if they object.
+3. **The acquisition gray zone, honestly:** "free tool built to be
+   acquired" is an untested reading of "non-commercial." Nobody
+   realistically pursues the free community tool — but *at the point of
+   sale*, the CC-NC data is not an asset we can transfer. That's fine:
+   what GGG would buy is the code, the brain, and the community — and
+   they'd swap in their own data on day one (the pipeline matrix exists
+   for exactly this). Counsel blesses this when talks get real, not
+   before.
+4. Game-file extraction (`dat_parser`/`oodle_extractor`) remains
+   strategically prime — not as a licensing escape hatch anymore, but as
+   the post-GGG pipeline prototype and the eventual replacement for
+   scraping entirely.
+5. **Unverified residue:** poe.ninja's API terms and craftofexile/
+   filterblade embedding policies produced no verifiable claims — treat
+   as unknown; a friendly email to each (all small teams) settles it.
+
+**Appendix — if a PAID build ever happens:** the analysis flips back:
+NC bars bundling the scraped DB (ship scraper-not-data, or game-file
+extraction only), the Trade Site embed needs written approval, and
+counsel review becomes mandatory. Keep this paragraph; don't relearn it.
 
 ## 3. Trade API automation: allowed, but only in the OAuth lane
 
@@ -122,17 +151,17 @@ sanctioned lane, and what precedent tolerated tools (Awakened PoE Trade /
 Exiled Exchange 2 / Sidekick, which historically use POESESSID) actually
 establish — no claims survived; ask GGG when registering the client.
 
-## Action list distilled
+## Action list distilled (rev 2 — free-forever plan)
 
 | # | Action | Owner | Cost |
 |---|---|---|---|
-| 1 | Sign up for Azure Artifact Signing (individual, US); wire into release script | Christian + Feature Worker | ~$10/mo |
-| 2 | Raise Game-File R&D routine priority — it's now the licensing fix AND the acquisition pipeline | routines | — |
-| 3 | Commercial build plan: ship scraper-not-data; keep bundled DB for the free/personal build only, pending counsel | Christian | counsel |
-| 4 | Email GGG: written-approval ask (bundled data, trade-site embed, OAuth client registration) — doubles as relationship opener for the acquisition thesis | Christian | — |
-| 5 | Email poe.ninja / Craft of Exile / FilterBlade about commercial use + embedding | Christian | — |
-| 6 | Build W3-22 notifications ONLY on registered OAuth + PKCE + header-governed rate limiting | Feature Worker | — |
-| 7 | Degrade Trade Site tab to open-in-browser in any paid build until #4 answers | Feature Worker | — |
+| 1 | Add data attribution + CC BY-NC-SA license notices (About/credits UI, README, installer) — our actual compliance obligation as a free distributor | Feature Worker | — |
+| 2 | Email GGG once: read-only scrape/embed blessing + OAuth client registration; doubles as the acquisition relationship opener | Christian | — |
+| 3 | Optional but recommended for adoption: Azure Artifact Signing (individual, US) wired into the release script — kills the SmartScreen wall | Christian + Feature Worker | ~$10/mo |
+| 4 | Email poe.ninja / Craft of Exile / FilterBlade: friendly heads-up + embedding OK-check | Christian | — |
+| 5 | Build W3-22 notifications ONLY on registered OAuth + PKCE + header-governed rate limiting (never POESESSID) | Feature Worker | — |
+| 6 | Keep Game-File R&D priority high — post-GGG pipeline prototype and eventual scrape replacement | routines | — |
+| 7 | (Dormant) If a paid build ever happens: apply the appendix — scraper-not-data, embed approval, counsel | — | counsel |
 
 ## Refuted during verification (excluded above)
 
