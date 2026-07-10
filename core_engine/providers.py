@@ -90,6 +90,23 @@ class CaptureProvider(Provider):
         """-> bool"""
 
 
+class ItemInHandProvider(Provider):
+    """The item the player is currently looking at. Today: the Ctrl+C
+    clipboard text PoE2 writes over a hovered item (W3-20), parsed by
+    `trade_tools.parse_item_text`. Later: the game tells us the hovered/
+    selected item directly (post-GGG engine callback) — no clipboard at all.
+    """
+    name = "item_in_hand"
+
+    @abstractmethod
+    def read(self):
+        """-> (info, raw_text). `raw_text` is the exact clipboard text seen
+        (possibly '' or non-item text — callers use it to debounce/log).
+        `info` is the parsed item dict (name/base/rarity/mods/...) or None
+        if there's nothing, the clipboard isn't a PoE item, or parsing
+        failed/empty."""
+
+
 # ---------------------------------------------------------------------------
 # Current adapters (lazy imports; every call fails soft)
 # ---------------------------------------------------------------------------
@@ -228,6 +245,42 @@ class BuiltinCapture(CaptureProvider):
 # Registry
 # ---------------------------------------------------------------------------
 
+class ClipboardItemInHand(ItemInHandProvider):
+    """Reads the game-written Ctrl+C clipboard text and parses it. Never
+    touches the game; never writes the clipboard. Qt import is lazy so this
+    stays importable headless (available() is False without a QApplication)."""
+
+    def _clipboard_text(self):
+        try:
+            from PyQt6.QtWidgets import QApplication
+            app = QApplication.instance()
+            if app is None:
+                return None
+            return app.clipboard().text() or ""
+        except Exception:
+            return None
+
+    def available(self):
+        return self._clipboard_text() is not None
+
+    def read(self):
+        txt = self._clipboard_text()
+        if txt is None:
+            return None, ""
+        if not txt or len(txt) > 4000:
+            return None, txt
+        if "Rarity:" not in txt and "Item Class:" not in txt:
+            return None, txt          # not a PoE item copy
+        try:
+            from core_engine.trade_tools import parse_item_text
+            info = parse_item_text(txt)
+        except Exception:
+            return None, txt
+        if not (info.get("name") or info.get("base")):
+            return None, txt
+        return info, txt
+
+
 class ObsCapture(CaptureProvider):
     """OBS Studio via obs-websocket v5 (core_engine/obs_bridge) — the
     W4-10/W4-21 capture path. Swap in with set_provider("capture", ...)."""
@@ -260,6 +313,7 @@ _DEFAULTS = {
     "craft_simulator": LocalCraftPlanner,
     "game_data": ScrapedGameData,
     "capture": BuiltinCapture,
+    "item_in_hand": ClipboardItemInHand,
 }
 
 

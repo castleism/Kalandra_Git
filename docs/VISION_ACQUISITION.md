@@ -57,7 +57,7 @@ Practical rules for every contributor (human or routine):
 | Build math | user's PoB install, LuaJIT headless (`pob_sim`) | `BuildCalculator` | In-game character/skill API; PoB stays as offline calculator |
 | Economy | poe.ninja snapshots + `economy_history` | `Economy` | Official trade/economy API feed |
 | Trade search | official trade-site URLs + `?q=` prefill (W3-21) | `TradeSearch` | First-party trade API with auth |
-| Item-in-hand | clipboard Ctrl+C parse (`trade_tools.parse_item_text`) | *(needs seam)* | Game tells us the hovered/selected item directly |
+| Item-in-hand | clipboard Ctrl+C parse (`trade_tools.parse_item_text`) | `ItemInHand` (2026-07-10) | Game tells us the hovered/selected item directly |
 | Tooltip live-read | screen crop OCR (Craft Hunter P2) | *(needs seam)* | Same — hovered-item callback makes OCR obsolete |
 | Player events (deaths, zones) | `Client.txt` tail (`death_review`) | *(needs seam)* | Game event stream |
 | Video capture | OBS websocket / mss (`obs_bridge`, `media_recorder`) | `Capture` | Engine-side replay/capture API |

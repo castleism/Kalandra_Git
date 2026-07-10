@@ -3400,25 +3400,19 @@ class KalandraOverlayApp(ParentClass):
         # An external tool owns price checking? Then it owns Ctrl+C too.
         if self.config.get("price_checker", "kalandra") != "kalandra":
             return
-        try:
-            txt = QApplication.clipboard().text() or ""
-        except Exception:
+        from core_engine.providers import get_provider
+        prov = get_provider("item_in_hand")
+        if prov is None:
             return
+        info, txt = prov.read()
         now = time.time()
         if (not txt or txt == self._last_clip or len(txt) > 4000
                 or (now - self._clip_ts) < 0.8):
             return
-        if "Rarity:" not in txt and "Item Class:" not in txt:
-            return                      # not a PoE item copy
         self._last_clip = txt
         self._clip_ts = now
-        try:
-            from core_engine.trade_tools import parse_item_text
-            info = parse_item_text(txt)
-        except Exception:
-            return
-        if not (info.get("name") or info.get("base")):
-            return
+        if not info:
+            return                      # not a PoE item copy / parse failed
 
         # CH-P1 (docs/CRAFT_HUNTER_SPEC.md §3b): while a hunt is armed, this
         # same game-written clipboard text is the AUTHORITATIVE target check.
@@ -4544,6 +4538,19 @@ class KalandraOverlayApp(ParentClass):
             view["jewels"] = full.get("jewels", []) or []
         return view
 
+    def ai_image_reader(self, path, instruction):
+        """Synchronous AI-vision read for the photo item scanner (W3-33).
+        Callers already run their own worker thread (same convention as
+        ai_respond); this makes one blocking network call and returns ""
+        on any failure so the caller falls back to offline OCR."""
+        if not self.voice:
+            return ""
+        try:
+            return self.voice.ai_read_image(path, instruction) or ""
+        except Exception as e:
+            self.signals.log.emit("VOICE", f"AI vision read failed: {e}")
+            return ""
+
     def open_dashboard(self):
         """Open the single-pane dashboard window (kept referenced so it persists)."""
         try:
@@ -4552,7 +4559,7 @@ class KalandraOverlayApp(ParentClass):
                 self._dashboard = KalandraDashboard(
                     config=self.config, pob_sim=self.pob_sim, accounts=self.accounts,
                     issues=self.issues, build_provider=self.current_build_view,
-                    ask_ai=self.ask_ai_text,
+                    ask_ai=self.ask_ai_text, ai_vision=self.ai_image_reader,
                     on_build_saved=self.load_build_from_file)
             self._present_menu(self._dashboard)
             return self._dashboard

@@ -9,6 +9,35 @@ Repo: https://github.com/castleism/Kalandra_Git
 
 ## [Unreleased]
 
+### Added — 2026-07-10 Provider-boundary audit + `ItemInHand` seam migration (W4-00)
+- **`docs/PROVIDER_AUDIT.md`** (new) — the full sweep for provider-seam
+  bypasses per `docs/VISION_ACQUISITION.md`'s architectural law: 6 open
+  violations with file:line references, ordered value-to-risk (RAG context
+  in `mirror_window.py` duplicating `game_data.search()`; raw sqlite on
+  `localized_knowledge.db` in `craft_hunter.py` and `nerf_intel.py`; three
+  independent OCR call sites in `dashboard.py`; a direct `poe2db.tw` fetch
+  in `item_art.py`; the Exchange tab bypassing the `economy` provider) plus
+  a "reviewed, not violations" section for legitimate direct-adapter uses
+  (the Sync & Scour ingestion trigger, each feature's private SQLite
+  stores). Maintained going forward by the weekly auditor routine.
+- **`ItemInHandProvider` / `ClipboardItemInHand`** (`core_engine/providers.py`)
+  — migrates the pipeline matrix's "Item-in-hand" row off `*(needs seam)*`.
+  `gui_overlay/mirror_window.py`'s clipboard-Ctrl+C watcher now calls
+  `get_provider("item_in_hand").read()` instead of touching
+  `QApplication.clipboard()` and `trade_tools.parse_item_text` directly;
+  behavior is unchanged (same debounce, same "is this a PoE item copy"
+  check, same parse). Post-GGG swap: an engine-callback adapter for the
+  hovered/selected item, no clipboard involved.
+- **`tests/provider_checks.py`** (new, 49 checks) — proves the whole
+  registry resolves/singletons/degrades correctly, `set_provider()` swap-in
+  works, and specifically that `ItemInHandProvider` can't be bare-
+  instantiated, `ClipboardItemInHand` fails soft headless (no
+  `QApplication`), parsing handles real/empty/oversized/non-item clipboard
+  text, and (via an AST check) that `mirror_window.py`'s call site no
+  longer references `QApplication.clipboard()` or `parse_item_text`
+  directly. `tests/companion_checks.py`'s registry-size check bumped
+  6 → 7 capabilities to match.
+
 ### Added — 2026-07-10 Photo item scanner: AI vision + unified OCR (W3-33 finished)
 - **`core_engine/photo_scanner.py`** — pick ANY item screenshot (Price
   Check's "Scan screenshot…") and Kalandra reads it into the same

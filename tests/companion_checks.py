@@ -87,7 +87,7 @@ guard("prompt block with unknown value", p3.prompt_block)
 section("providers — registry, degradation")
 from core_engine.providers import get_provider, set_provider, capabilities
 
-check("six capabilities", len(capabilities()) == 6)
+check("seven capabilities", len(capabilities()) == 7)
 check("unknown capability -> None", get_provider("time_machine") is None)
 for cap in capabilities():
     prov = get_provider(cap)
