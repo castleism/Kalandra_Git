@@ -9,6 +9,20 @@ Repo: https://github.com/castleism/Kalandra_Git
 
 ## [Unreleased]
 
+### Added — 2026-07-10 DB status window (double-click the sync medallion)
+- The sync medallion learned the same single/double-click split as its
+  siblings (single = sync, now properly deferred 250ms; double = the new
+  **Database window**): active DB path and size, pages stored, last sync
+  time, pages per game patch and per source, and the crawl frontier
+  (queued + errored-retryable) — all from a new read-only
+  `database_handler.db_status()` that opens its own `mode=ro` connection,
+  so peeking never fights a running sync (WAL).
+- The window also hosts the **auto-sync source picker** — checkboxes for
+  poe2db / poe2wiki / poe.ninja that edit the exact `sources_enabled`
+  config the sync worker already honors — plus a Sync-now button.
+  `tests/db_status_checks.py` (11 checks: histograms, missing/corrupt/
+  schema-less DBs fail soft, read-only promise), all green.
+
 ### Added — 2026-07-10 Price Check v3: searches open with the item's filters pre-filled (W3-21 finished)
 - "Open trade search" no longer lands you on a blank search page: Kalandra
   now builds the trade site's own query JSON from the parsed item and opens

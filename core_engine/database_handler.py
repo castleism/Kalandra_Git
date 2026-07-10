@@ -129,6 +129,71 @@ class KalandraDBHandler:
         """Safely terminates the database connection."""
         self.conn.close()
 
+
+def db_status(db_path=None):
+    """Everything the DB status window shows, in one read-only pass.
+
+    Returns a dict that is ALWAYS complete (zeros/None on any problem):
+      path, exists, size_bytes, pages, last_scraped (ISO or None),
+      versions {game_version_tag: pages}, sources {domain: pages},
+      pending {queued, error, done}  (crawl_state, if present).
+    Opens its own read-only connection — safe to call from the UI thread
+    while a sync worker is writing (WAL)."""
+    import sqlite3 as _sq
+    if db_path is None:
+        db_path = os.path.join(KalandraDBHandler._configured_db_dir(),
+                               "localized_knowledge.db")
+    out = {"path": db_path, "exists": os.path.exists(db_path),
+           "size_bytes": 0, "pages": 0, "last_scraped": None,
+           "versions": {}, "sources": {},
+           "pending": {"queued": 0, "error": 0, "done": 0}}
+    if not out["exists"]:
+        return out
+    try:
+        out["size_bytes"] = os.path.getsize(db_path)
+    except Exception:
+        pass
+    con = None
+    try:
+        con = _sq.connect(f"file:{db_path}?mode=ro", uri=True, timeout=5)
+        cur = con.cursor()
+        try:
+            out["pages"] = cur.execute(
+                "SELECT COUNT(*) FROM knowledge_ledger").fetchone()[0]
+            out["last_scraped"] = cur.execute(
+                "SELECT MAX(scraped_at) FROM knowledge_ledger").fetchone()[0]
+            for tag, n in cur.execute(
+                    "SELECT game_version_tag, COUNT(*) FROM knowledge_ledger "
+                    "GROUP BY game_version_tag ORDER BY COUNT(*) DESC"):
+                out["versions"][str(tag)] = n
+            # domain histogram: substr math beats pulling every URL over
+            for url, n in cur.execute(
+                    "SELECT source_url, COUNT(*) FROM knowledge_ledger "
+                    "GROUP BY source_url").fetchall()[:100000]:
+                dom = str(url or "").split("//")[-1].split("/")[0] or "?"
+                out["sources"][dom] = out["sources"].get(dom, 0) + n
+        except Exception:
+            pass
+        try:
+            for status, n in cur.execute(
+                    "SELECT status, COUNT(*) FROM crawl_state "
+                    "GROUP BY status"):
+                key = str(status) if str(status) in out["pending"] else None
+                if key:
+                    out["pending"][key] = n
+        except Exception:
+            pass
+    except Exception:
+        pass
+    finally:
+        try:
+            if con is not None:
+                con.close()
+        except Exception:
+            pass
+    return out
+
+
 # Interactive Self-Test Block
 if __name__ == "__main__":
     print("Testing Kalandra Database System...")

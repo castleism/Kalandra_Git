@@ -198,8 +198,13 @@ whisper, and click in game is the player's.
 1. **"Hey Kalandra" wake word** — lightweight always-on detector (low CPU) that
    only wakes transcription when it hears the phrase.
 2. **ElevenLabs voices** — premium cloud TTS alongside the free local voice.
-3. **DB status window** — double-click the sync medallion: active database,
-   last sync, newer-patch check, primary-source picker.
+3. **DB status window** — ✅ SHIPPED 2026-07-10 (double-click the sync
+   medallion: active DB path/size, pages, last sync, per-patch and
+   per-source histograms, crawl frontier, source picker editing the same
+   `sources_enabled` the sync worker honors, Sync-now button;
+   `database_handler.db_status` is read-only + `tests/db_status_checks.py`
+   (11)). Remaining nicety: a live "newer patch exists" probe — today the
+   window shows last-sync age and says to re-sync after patches.
 4. **PoE Overlay II Standalone** — add to the integrations list in setup/settings.
 5. **Lock + audit dependencies** (quick win, see above).
 

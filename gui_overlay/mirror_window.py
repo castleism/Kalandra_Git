@@ -2489,6 +2489,9 @@ class KalandraOverlayApp(ParentClass):
         self.char_click_timer = QTimer(self)         # char: single=picker, double=PoB tab
         self.char_click_timer.setSingleShot(True)
         self.char_click_timer.timeout.connect(self.execute_delayed_character)
+        self.sync_click_timer = QTimer(self)         # sync: single=sync, double=DB status
+        self.sync_click_timer.setSingleShot(True)
+        self.sync_click_timer.timeout.connect(self.execute_delayed_sync)
 
         # W3-20: watch the clipboard for in-game Ctrl+C item copies. Windows
         # notifies Qt of ALL clipboard changes, so this works while you play
@@ -3093,6 +3096,12 @@ class KalandraOverlayApp(ParentClass):
                 self._double_click_fired = True
                 self.open_dashboard_build()
                 event.accept()
+            elif bid == "TopCenter":
+                # Double-click the sync medallion -> the DB status window.
+                self.sync_click_timer.stop()
+                self._double_click_fired = True
+                self.open_db_status()
+                event.accept()
 
     def mouseMoveEvent(self, event):
         x = int(event.position().x())
@@ -3161,6 +3170,9 @@ class KalandraOverlayApp(ParentClass):
         elif bid == "TopRight":
             # Defer the character picker so a double-click can open the PoB tab.
             self.char_click_timer.start(250)
+        elif bid == "TopCenter":
+            # Defer the sync so a double-click can open the DB status window.
+            self.sync_click_timer.start(250)
         else:
             for btn in self.buttons:
                 if btn["id"] == bid and btn["callback"]:
@@ -3176,6 +3188,109 @@ class KalandraOverlayApp(ParentClass):
 
     def execute_delayed_character(self):
         self.select_active_character()
+
+    def execute_delayed_sync(self):
+        self.trigger_database_scour_sync()
+
+    # ------------------------------------------------
+    # DB STATUS WINDOW (double-click the sync medallion)
+    # ------------------------------------------------
+    def open_db_status(self):
+        """What's in the local knowledge base, when it last synced, and which
+        sources auto-sync uses — the picker edits the SAME sources_enabled
+        config the sync worker already honors. Read-only DB access."""
+        try:
+            from core_engine.database_handler import db_status
+            st = db_status()
+        except Exception as e:
+            st = {"path": "?", "exists": False, "size_bytes": 0, "pages": 0,
+                  "last_scraped": None, "versions": {}, "sources": {},
+                  "pending": {"queued": 0, "error": 0, "done": 0},
+                  "error": str(e)}
+        dlg = KalandraFrameDialog("DATABASE", None)
+        try:
+            from PyQt6.QtWidgets import QCheckBox, QGridLayout
+            from gui_overlay import theme as _t
+            v = dlg.body                      # the frame's QVBoxLayout
+            head = QLabel("Local knowledge base")
+            head.setStyleSheet(f"color:{_t.GOLD};font-size:16px;"
+                               "font-weight:bold;")
+            v.addWidget(head)
+            g = QGridLayout()
+            mb = st["size_bytes"] / (1024 * 1024.0)
+            last = (st["last_scraped"] or "never")[:19].replace("T", " ")
+            vers = ", ".join(f"{k} ({n:,})" for k, n in
+                             list(st["versions"].items())[:3]) or "—"
+            srcs = ", ".join(f"{k} ({n:,})" for k, n in sorted(
+                st["sources"].items(), key=lambda kv: -kv[1])[:4]) or "—"
+            pend = st["pending"]
+            rows = [
+                ("Active database", st["path"]
+                 + ("" if st["exists"] else "  (missing!)")),
+                ("Pages stored", f"{st['pages']:,}  ({mb:,.1f} MB)"),
+                ("Last sync", last + "  — single-click the medallion to "
+                 "sync again (re-sync after every game patch)"),
+                ("Data tagged", vers),
+                ("Sources in DB", srcs),
+                ("Crawl frontier", f"{pend.get('queued', 0):,} queued · "
+                 f"{pend.get('error', 0):,} errored (retryable)"),
+            ]
+            for r, (k, val) in enumerate(rows):
+                kl = QLabel(k)
+                kl.setStyleSheet(f"color:{_t.MUTED};")
+                vl = QLabel(str(val))
+                vl.setWordWrap(True)
+                vl.setStyleSheet(f"color:{_t.TEXT};")
+                g.addWidget(kl, r, 0, Qt.AlignmentFlag.AlignTop)
+                g.addWidget(vl, r, 1)
+            g.setColumnStretch(1, 1)
+            v.addLayout(g)
+
+            pick = QLabel("Auto-sync sources (the sync worker honors these):")
+            pick.setStyleSheet(f"color:{_t.GOLD};margin-top:8px;")
+            v.addWidget(pick)
+            enabled = self.config.get("sources_enabled")
+            if not isinstance(enabled, dict):
+                enabled = {}
+                self.config["sources_enabled"] = enabled
+            boxes = {}
+            for key, label, default in (
+                    ("poe2db", "poe2db.tw — primary game data", True),
+                    ("poe2wiki", "poe2wiki.net — secondary (slower, "
+                     "Cloudflare-throttled)", False),
+                    ("poe_ninja", "poe.ninja — economy snapshots", False)):
+                cb = QCheckBox(label)
+                cb.setChecked(bool(enabled.get(key, default)))
+                boxes[key] = cb
+                v.addWidget(cb)
+
+            def _save():
+                for k, cb in boxes.items():
+                    enabled[k] = bool(cb.isChecked())
+                save_config(self.config)
+
+            for cb in boxes.values():
+                cb.toggled.connect(lambda _c, s=_save: s())
+
+            brow = QHBoxLayout()
+            sync_btn = QPushButton("⟳ Sync now")
+            sync_btn.setProperty("gem", "sapphire")
+
+            def _sync_now():
+                dlg.close()
+                self.trigger_database_scour_sync()
+            sync_btn.clicked.connect(_sync_now)
+            brow.addWidget(sync_btn)
+            brow.addStretch()
+            close_btn = QPushButton("Close")
+            close_btn.clicked.connect(dlg.close)
+            brow.addWidget(close_btn)
+            v.addLayout(brow)
+            dlg.resize(640, 480)
+        except Exception as e:
+            logger.log_event("SYSTEM", f"DB status window failed: {e}")
+            return
+        self._present_menu(dlg)
 
     # ------------------------------------------------
     # MENU MANAGER — one menu at a time; the overlay steps aside while a
