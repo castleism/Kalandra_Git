@@ -9,6 +9,21 @@ Repo: https://github.com/castleism/Kalandra_Git
 
 ## [Unreleased]
 
+### Fixed — 2026-07-11 character selector couldn't reach your PoB build
+- The character selector could miss the build you had open in Path of
+  Building: it only scanned default guess-locations (no PoB path was
+  configured) and only ever saw builds ALREADY SAVED to a .xml. Three new
+  buttons make a character always reachable: **Locate PoB…** (point Kalandra
+  at your PoB install or Builds folder — saved to config so every future
+  scan and the PoB-live tab use YOUR install), **Launch PoB** (opens the
+  Path of Building it's pointed at, no pasted code needed — previously you
+  could only launch PoB as a side effect of pasting a code), and **Load
+  build file…** (pick a .xml directly, the surest route when the scan misses
+  it). The "no builds found" message now explains that a build only becomes
+  a file once you Ctrl+S it in PoB, and points at these buttons and the
+  paste-code route. `pob_install_dir` / `pob_builds_dir` / `pob_exe` are
+  persisted when located. Needs an on-Windows visual check.
+
 ### Changed — 2026-07-11 installer CI now also builds a single self-extracting .exe
 - The Build Installer Package workflow wraps `Kalandra-Setup.zip` into a
   one-file `Kalandra-Installer.exe` (7-Zip GUI self-extractor): run it, pick

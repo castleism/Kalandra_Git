@@ -664,18 +664,6 @@ if PYQT_AVAILABLE:
             tb = QPushButton("Trade ↗")
             from core_engine.trade_tools import trade_search_url
             url = trade_search_url(info, league)
-            # W3-21: pre-fill the query when the stat map is already cached
-            # (the Price Check tab warms it); plain search URL otherwise.
-            try:
-                from gui_overlay.dashboard import _trade_stats_index
-                from core_engine.trade_tools import (build_trade_query,
-                                                     trade_query_url)
-                idx = _trade_stats_index()
-                if idx:
-                    qy, _m, _t, _n = build_trade_query(info, idx)
-                    url = trade_query_url(qy, league)
-            except Exception:
-                pass
             tb.clicked.connect(lambda: (QDesktopServices.openUrl(QUrl(url)),
                                         self.close()))
             row.addWidget(tb)
@@ -874,29 +862,6 @@ if PYQT_AVAILABLE:
             pc_row.addWidget(self.pc_combo, 1)
             root.addLayout(pc_row)
 
-            # --- Overlay transparency (mid-term roadmap item) ---
-            op_row = QHBoxLayout()
-            op_row.addWidget(QLabel("Overlay transparency:"))
-            from PyQt6.QtWidgets import QSlider
-            self.opacity_slider = QSlider(Qt.Orientation.Horizontal)
-            self.opacity_slider.setRange(35, 100)      # % opaque; 35 = floor
-            try:
-                cur_op = int(float(self.config.get("overlay_opacity",
-                                                   0.97)) * 100)
-            except Exception:
-                cur_op = 97
-            self.opacity_slider.setValue(min(max(cur_op, 35), 100))
-            self.opacity_slider.setToolTip(
-                "How solid the mirror is when the game does NOT have focus "
-                "(ghost mode still fades it further while you play). "
-                "Applies live.")
-            self.opacity_slider.valueChanged.connect(self._on_opacity_change)
-            op_row.addWidget(self.opacity_slider, 1)
-            self.opacity_lbl = QLabel(f"{self.opacity_slider.value()}%")
-            self.opacity_lbl.setStyleSheet("color:#9aa4b2;")
-            op_row.addWidget(self.opacity_lbl)
-            root.addLayout(op_row)
-
             # --- Divine Orb voice ---
             voice_row = QHBoxLayout()
             voice_row.addWidget(QLabel("Divine Orb voice:"))
@@ -1073,14 +1038,6 @@ if PYQT_AVAILABLE:
 
         def _on_popup_toggle(self, _state):
             self.config["price_popup"] = self.popup_check.isChecked()
-            save_config(self.config)
-
-        def _on_opacity_change(self, val):
-            # Live: the overlay reads overlay_opacity from this SAME config
-            # dict every paint, so dragging the slider shows immediately.
-            self.config["overlay_opacity"] = round(int(val) / 100.0, 2)
-            if hasattr(self, "opacity_lbl"):
-                self.opacity_lbl.setText(f"{int(val)}%")
             save_config(self.config)
 
         def _on_orb_change(self, _idx):
@@ -1913,6 +1870,29 @@ if PYQT_AVAILABLE:
             load_builds = QPushButton("Load my saved PoB builds")
             load_builds.clicked.connect(self._load_pob_builds)
             pl.addWidget(load_builds)
+
+            # Direct controls so a build is never stuck: point Kalandra at the
+            # PoB install/Builds folder, launch that PoB, or load a .xml
+            # straight off disk (works even when the scan misses it).
+            drow = QHBoxLayout()
+            locate_btn = QPushButton("Locate PoB…")
+            locate_btn.setToolTip("Point Kalandra at your Path of Building "
+                                  "folder (its install folder or its Builds "
+                                  "folder). Saved so it always scans yours.")
+            locate_btn.clicked.connect(self._locate_pob)
+            drow.addWidget(locate_btn)
+            launch_btn = QPushButton("Launch PoB")
+            launch_btn.setToolTip("Open the Path of Building that Kalandra is "
+                                  "pointed at (no code needed).")
+            launch_btn.clicked.connect(self._launch_pob_only)
+            drow.addWidget(launch_btn)
+            loadfile_btn = QPushButton("Load build file…")
+            loadfile_btn.setToolTip("Pick a PoB build .xml directly — the "
+                                    "surest way to pull in a specific "
+                                    "character.")
+            loadfile_btn.clicked.connect(self._load_build_file)
+            drow.addWidget(loadfile_btn)
+            pl.addLayout(drow)
             root.addWidget(pob_box)
 
             ladder_lbl = QLabel("— or browse the public ladder / wait for GGG's account API —")
@@ -2212,6 +2192,98 @@ if PYQT_AVAILABLE:
             self.status.setText("Scanning your Path of Building builds folder...")
             threading.Thread(target=self._builds_worker, daemon=True).start()
 
+        def _locate_pob(self):
+            """Let the user point Kalandra at their PoB folder. Accepts either
+            the install folder OR the Builds folder; saves it to config so
+            every future scan (and the PoB-live tab) uses THIS install."""
+            from PyQt6.QtWidgets import QFileDialog
+            start = (self.config.get("pob_install_dir")
+                     or self.config.get("pob_builds_dir") or "")
+            d = QFileDialog.getExistingDirectory(
+                self, "Select your Path of Building folder (install or Builds)",
+                start)
+            if not d:
+                return
+            base = os.path.basename(d.rstrip("\\/")).lower()
+            if base == "builds":
+                self.config["pob_builds_dir"] = d
+                self.config["pob_install_dir"] = os.path.dirname(d.rstrip("\\/"))
+            else:
+                self.config["pob_install_dir"] = d
+                bd = os.path.join(d, "Builds")
+                if os.path.isdir(bd):
+                    self.config["pob_builds_dir"] = bd
+            # If a PoB exe lives here, remember it too (enables Launch PoB).
+            try:
+                exe = self.pob.find_pob_exe() if self.pob else None
+                for cand in (os.path.join(self.config["pob_install_dir"],
+                                          "Path of Building.exe"),
+                             os.path.join(self.config["pob_install_dir"],
+                                          "PathOfBuilding.exe")):
+                    if os.path.exists(cand):
+                        exe = cand
+                        break
+                if exe:
+                    self.config["pob_exe"] = exe
+            except Exception:
+                pass
+            save_config(self.config)
+            self.status.setText("PoB folder saved — scanning it now…")
+            self._load_pob_builds()
+
+        def _launch_pob_only(self):
+            """Open the configured/discovered PoB app directly — no pasted
+            code required. Answers 'let me launch the PoB it's looking at'."""
+            if not self.pob:
+                self.status.setText("PoB bridge not available.")
+                return
+            ok, msg = self.pob.launch_path_of_building(
+                self.config.get("pob_exe"))
+            if not ok:
+                # Offer to locate the exe so the button works next time.
+                from PyQt6.QtWidgets import QFileDialog
+                exe, _ = QFileDialog.getOpenFileName(
+                    self, "Locate Path of Building (.exe)",
+                    self.config.get("pob_install_dir", ""),
+                    "Path of Building (*.exe)")
+                if exe:
+                    self.config["pob_exe"] = exe
+                    self.config["pob_install_dir"] = os.path.dirname(exe)
+                    save_config(self.config)
+                    ok, msg = self.pob.launch_path_of_building(exe)
+            self.status.setText(("✓ " if ok else "⚠ ") + msg)
+
+        def _load_build_file(self):
+            """Pick a PoB build .xml directly and load it — the surest way to
+            pull in a specific character when the folder scan misses it."""
+            from PyQt6.QtWidgets import QFileDialog
+            start = (self.config.get("pob_builds_dir")
+                     or self.config.get("pob_install_dir") or "")
+            path, _ = QFileDialog.getOpenFileName(
+                self, "Select a PoB build file", start,
+                "PoB build (*.xml);;All files (*.*)")
+            if not path:
+                return
+            if not self.on_load_build_file:
+                self.status.setText("Build-loading isn't wired in this build.")
+                return
+            try:
+                self.on_load_build_file(path)
+                # Remember the folder so the scan finds siblings next time.
+                self.config.setdefault("pob_builds_dir", os.path.dirname(path))
+                save_config(self.config)
+                self.status.setText(
+                    f"Loaded {os.path.basename(path)} — it's now the active "
+                    "build (open the Build (PoB) tab to see it).")
+                if self.on_select:
+                    try:
+                        self.on_select(os.path.splitext(
+                            os.path.basename(path))[0])
+                    except Exception:
+                        pass
+            except Exception as e:
+                self.status.setText(f"Couldn't load that build: {e}")
+
         def _builds_worker(self):
             """Scan for saved PoB builds OFF the UI thread (the scan walks the
             filesystem and parses XML, so it must never run on the UI thread)."""
@@ -2255,9 +2327,14 @@ if PYQT_AVAILABLE:
                 QMessageBox.information(
                     self, "No saved builds found",
                     "I looked for PoB build files (.xml) in:\n\n" + scanned +
-                    "\n\nIf your builds are elsewhere, set \"pob_builds_dir\" in "
-                    "data_engine/config.json to that folder. Or just paste a PoB "
-                    "code above and click 'Load build'.")
+                    "\n\nThree ways to fix this:\n"
+                    "  • Click 'Locate PoB…' and point me at your Path of "
+                    "Building folder (I'll remember it).\n"
+                    "  • Click 'Load build file…' to pick the .xml directly.\n"
+                    "  • Or paste the PoB code above and click 'Load build'.\n\n"
+                    "Note: a build only becomes a file once you SAVE it in PoB "
+                    "(Ctrl+S). A build you've only imported/opened won't appear "
+                    "until it's saved — the paste-code route avoids that.")
                 return
             for b in builds:
                 cls = b.get("class_name", "?")
@@ -2520,9 +2597,6 @@ class KalandraOverlayApp(ParentClass):
         self.char_click_timer = QTimer(self)         # char: single=picker, double=PoB tab
         self.char_click_timer.setSingleShot(True)
         self.char_click_timer.timeout.connect(self.execute_delayed_character)
-        self.sync_click_timer = QTimer(self)         # sync: single=sync, double=DB status
-        self.sync_click_timer.setSingleShot(True)
-        self.sync_click_timer.timeout.connect(self.execute_delayed_sync)
 
         # W3-20: watch the clipboard for in-game Ctrl+C item copies. Windows
         # notifies Qt of ALL clipboard changes, so this works while you play
@@ -2792,30 +2866,19 @@ class KalandraOverlayApp(ParentClass):
                                              "and clickable again.")
             self.update()
 
-    def _base_opacity(self):
-        """The user's overlay-transparency setting (Settings slider), read
-        live from config so dragging the slider repaints immediately.
-        Clamped to a floor — a 0% overlay is an unfindable overlay."""
-        try:   # junk config must never kill paintEvent
-            v = float(self.config.get("overlay_opacity",
-                                      self.opacity_multiplier))
-        except Exception:
-            v = self.opacity_multiplier
-        return min(max(v, 0.35), 1.0)
-
     def _ghost_opacities(self):
         """(frame_opacity, orb_opacity) for the current state. Ghosted: the
         frame is a whisper, the orb stays clearly visible. Ctrl override or
-        no game: both follow the user's base opacity."""
-        base = self._base_opacity()
+        no game: both follow the normal multiplier."""
         if self.game_mode and not self._ctrl_override:
             try:   # junk config must never kill paintEvent
                 fade = float(self.config.get("game_fade_frame", 0.15))
             except Exception:
                 fade = 0.15
             fade = min(max(fade, 0.0), 1.0)
-            return base * fade, base * 0.92
-        return base, base
+            return (self.opacity_multiplier * fade,
+                    self.opacity_multiplier * 0.92)
+        return self.opacity_multiplier, self.opacity_multiplier
 
     def _death_tick(self):
         """1s poll (W4-21): while the game runs, tail Client.txt; the
@@ -3138,12 +3201,6 @@ class KalandraOverlayApp(ParentClass):
                 self._double_click_fired = True
                 self.open_dashboard_build()
                 event.accept()
-            elif bid == "TopCenter":
-                # Double-click the sync medallion -> the DB status window.
-                self.sync_click_timer.stop()
-                self._double_click_fired = True
-                self.open_db_status()
-                event.accept()
 
     def mouseMoveEvent(self, event):
         x = int(event.position().x())
@@ -3212,9 +3269,6 @@ class KalandraOverlayApp(ParentClass):
         elif bid == "TopRight":
             # Defer the character picker so a double-click can open the PoB tab.
             self.char_click_timer.start(250)
-        elif bid == "TopCenter":
-            # Defer the sync so a double-click can open the DB status window.
-            self.sync_click_timer.start(250)
         else:
             for btn in self.buttons:
                 if btn["id"] == bid and btn["callback"]:
@@ -3230,119 +3284,6 @@ class KalandraOverlayApp(ParentClass):
 
     def execute_delayed_character(self):
         self.select_active_character()
-
-    def execute_delayed_sync(self):
-        self.trigger_database_scour_sync()
-
-    # ------------------------------------------------
-    # DB STATUS WINDOW (double-click the sync medallion)
-    # ------------------------------------------------
-    def open_db_status(self):
-        """What's in the local knowledge base, when it last synced, and which
-        sources auto-sync uses — the picker edits the SAME sources_enabled
-        config the sync worker already honors. Read-only DB access."""
-        try:
-            from core_engine.database_handler import db_status
-            st = db_status()
-        except Exception as e:
-            st = {"path": "?", "exists": False, "size_bytes": 0, "pages": 0,
-                  "last_scraped": None, "versions": {}, "sources": {},
-                  "pending": {"queued": 0, "error": 0, "done": 0},
-                  "error": str(e)}
-        dlg = KalandraFrameDialog("DATABASE", None)
-        try:
-            from PyQt6.QtWidgets import QCheckBox, QGridLayout
-            from gui_overlay import theme as _t
-            v = dlg.body                      # the frame's QVBoxLayout
-            head = QLabel("Local knowledge base")
-            head.setStyleSheet(f"color:{_t.GOLD};font-size:16px;"
-                               "font-weight:bold;")
-            v.addWidget(head)
-            g = QGridLayout()
-            mb = st["size_bytes"] / (1024 * 1024.0)
-            last = (st["last_scraped"] or "never")[:19].replace("T", " ")
-            vers = ", ".join(f"{k} ({n:,})" for k, n in
-                             list(st["versions"].items())[:3]) or "—"
-            srcs = ", ".join(f"{k} ({n:,})" for k, n in sorted(
-                st["sources"].items(), key=lambda kv: -kv[1])[:4]) or "—"
-            pend = st["pending"]
-            rows = [
-                ("Active database", st["path"]
-                 + ("" if st["exists"] else "  (missing!)")),
-                ("Pages stored", f"{st['pages']:,}  ({mb:,.1f} MB)"),
-                ("Last sync", last + "  — single-click the medallion to "
-                 "sync again (re-sync after every game patch)"),
-                ("Data tagged", vers),
-                ("Sources in DB", srcs),
-                ("Crawl frontier", f"{pend.get('queued', 0):,} queued · "
-                 f"{pend.get('error', 0):,} errored (retryable)"),
-            ]
-            for r, (k, val) in enumerate(rows):
-                kl = QLabel(k)
-                kl.setStyleSheet(f"color:{_t.MUTED};")
-                vl = QLabel(str(val))
-                vl.setWordWrap(True)
-                vl.setStyleSheet(f"color:{_t.TEXT};")
-                g.addWidget(kl, r, 0, Qt.AlignmentFlag.AlignTop)
-                g.addWidget(vl, r, 1)
-            g.setColumnStretch(1, 1)
-            v.addLayout(g)
-
-            pick = QLabel("Auto-sync sources (the sync worker honors these):")
-            pick.setStyleSheet(f"color:{_t.GOLD};margin-top:8px;")
-            v.addWidget(pick)
-            enabled = self.config.get("sources_enabled")
-            if not isinstance(enabled, dict):
-                enabled = {}
-                self.config["sources_enabled"] = enabled
-            boxes = {}
-            for key, label, default in (
-                    ("poe2db", "poe2db.tw — primary game data", True),
-                    ("poe2wiki", "poe2wiki.net — secondary (slower, "
-                     "Cloudflare-throttled)", False),
-                    ("poe_ninja", "poe.ninja — economy snapshots", False)):
-                cb = QCheckBox(label)
-                cb.setChecked(bool(enabled.get(key, default)))
-                boxes[key] = cb
-                v.addWidget(cb)
-
-            def _save():
-                for k, cb in boxes.items():
-                    enabled[k] = bool(cb.isChecked())
-                save_config(self.config)
-
-            for cb in boxes.values():
-                cb.toggled.connect(lambda _c, s=_save: s())
-
-            lic = QLabel(
-                "Data sources & licenses: game data with thanks to poe2db.tw "
-                "and poe2wiki.net (wiki content: CC BY-NC-SA 3.0) and "
-                "economy data from poe.ninja. Kalandra is a free fan tool, "
-                "not affiliated with Grinding Gear Games; all game IP "
-                "belongs to GGG. Full notices: READ_ME_FIRST.md.")
-            lic.setWordWrap(True)
-            lic.setStyleSheet(f"color:{_t.FAINT};font-size:10px;")
-            v.addWidget(lic)
-
-            brow = QHBoxLayout()
-            sync_btn = QPushButton("⟳ Sync now")
-            sync_btn.setProperty("gem", "sapphire")
-
-            def _sync_now():
-                dlg.close()
-                self.trigger_database_scour_sync()
-            sync_btn.clicked.connect(_sync_now)
-            brow.addWidget(sync_btn)
-            brow.addStretch()
-            close_btn = QPushButton("Close")
-            close_btn.clicked.connect(dlg.close)
-            brow.addWidget(close_btn)
-            v.addLayout(brow)
-            dlg.resize(640, 480)
-        except Exception as e:
-            logger.log_event("SYSTEM", f"DB status window failed: {e}")
-            return
-        self._present_menu(dlg)
 
     # ------------------------------------------------
     # MENU MANAGER — one menu at a time; the overlay steps aside while a
@@ -3410,54 +3351,25 @@ class KalandraOverlayApp(ParentClass):
         # An external tool owns price checking? Then it owns Ctrl+C too.
         if self.config.get("price_checker", "kalandra") != "kalandra":
             return
-        from core_engine.providers import get_provider
-        prov = get_provider("item_in_hand")
-        if prov is None:
+        try:
+            txt = QApplication.clipboard().text() or ""
+        except Exception:
             return
-        info, txt = prov.read()
         now = time.time()
         if (not txt or txt == self._last_clip or len(txt) > 4000
                 or (now - self._clip_ts) < 0.8):
             return
+        if "Rarity:" not in txt and "Item Class:" not in txt:
+            return                      # not a PoE item copy
         self._last_clip = txt
         self._clip_ts = now
-        if not info:
-            return                      # not a PoE item copy / parse failed
-
-        # CH-P1 (docs/CRAFT_HUNTER_SPEC.md §3b): while a hunt is armed, this
-        # same game-written clipboard text is the AUTHORITATIVE target check.
-        # Verdict goes to a cursor-side toast + the Craft Hunter tab; while
-        # hunting, the confirm replaces the price popup (you're spamming
-        # orbs, not pricing). Same compliance line as W3-20: read-only —
-        # Kalandra shows a verdict, the human does every action.
         try:
-            hcfg = self.config.get("craft_hunter") or {}
-            if hcfg.get("armed") and hcfg.get("targets"):
-                from core_engine.craft_hunter import evaluate_item
-                res = evaluate_item(hcfg.get("targets"),
-                                    info.get("mods") or [],
-                                    mode=hcfg.get("mode", "any"))
-                if res.get("checked"):
-                    logger.log_event(
-                        "CRAFT",
-                        ("TARGET HIT — stop crafting! " if res.get("hit")
-                         else "no target hit — keep going ")
-                        + f"({info.get('name') or info.get('base')})")
-                    try:
-                        from gui_overlay.craft_hunter import show_hunt_toast
-                        show_hunt_toast(res)
-                    except Exception:
-                        pass
-                    d = getattr(self, "_dashboard", None)
-                    if d is not None:
-                        try:
-                            d.notify_craft_confirm(res, txt)
-                        except Exception:
-                            pass
-                    return
+            from core_engine.trade_tools import parse_item_text
+            info = parse_item_text(txt)
         except Exception:
-            pass
-
+            return
+        if not (info.get("name") or info.get("base")):
+            return
         logger.log_event("TRADE", f"Item copied in game: "
                          f"{info.get('name') or info.get('base')}")
         self._show_price_popup(info, txt)
@@ -4548,19 +4460,6 @@ class KalandraOverlayApp(ParentClass):
             view["jewels"] = full.get("jewels", []) or []
         return view
 
-    def ai_image_reader(self, path, instruction):
-        """Synchronous AI-vision read for the photo item scanner (W3-33).
-        Callers already run their own worker thread (same convention as
-        ai_respond); this makes one blocking network call and returns ""
-        on any failure so the caller falls back to offline OCR."""
-        if not self.voice:
-            return ""
-        try:
-            return self.voice.ai_read_image(path, instruction) or ""
-        except Exception as e:
-            self.signals.log.emit("VOICE", f"AI vision read failed: {e}")
-            return ""
-
     def open_dashboard(self):
         """Open the single-pane dashboard window (kept referenced so it persists)."""
         try:
@@ -4569,7 +4468,7 @@ class KalandraOverlayApp(ParentClass):
                 self._dashboard = KalandraDashboard(
                     config=self.config, pob_sim=self.pob_sim, accounts=self.accounts,
                     issues=self.issues, build_provider=self.current_build_view,
-                    ask_ai=self.ask_ai_text, ai_vision=self.ai_image_reader,
+                    ask_ai=self.ask_ai_text,
                     on_build_saved=self.load_build_from_file)
             self._present_menu(self._dashboard)
             return self._dashboard
