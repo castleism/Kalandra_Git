@@ -6,7 +6,7 @@ angles, 20 sources fetched, 94 claims extracted, 25 adversarially verified:
 sources. This is research, not legal advice.*
 
 > **Rev 2 (2026-07-10, same day):** Christian set the business model —
-> **Kalandra is free forever; the exit is acquisition, not sales**
+> **Kalandra is free to the community**
 > (recorded in `docs/VISION_ACQUISITION.md`). The verified facts below are
 > unchanged, but the implications flip substantially in our favor, so each
 > section now leads with the free-distribution reading. The paid-product
@@ -97,23 +97,18 @@ survive verification — irrelevant unless the Azure path fails.
 2. **GGG's ToS clauses apply regardless of price** — the scraping and
    framing prohibitions are about pathofexile.com access, not money. Two
    asks in one email to GGG: blessing for the read-only scrape/embed
-   patterns, and OAuth client registration (§3). This is also the
-   acquisition relationship opener. Until answered, the embedded Trade
+   patterns, and OAuth client registration (§3). Until answered, the embedded Trade
    Site tab is tolerated-risk (the ecosystem precedent: GGG has left
    similar tools alone for years) — an "open in browser" fallback exists
    if they object.
-3. **The acquisition gray zone, honestly:** "free tool built to be
-   acquired" is an untested reading of "non-commercial." Nobody
-   realistically pursues the free community tool — but *at the point of
-   sale*, the CC-NC data is not an asset we can transfer. That's fine:
-   what GGG would buy is the code, the brain, and the community — and
-   they'd swap in their own data on day one (the pipeline matrix exists
-   for exactly this). Counsel blesses this when talks get real, not
-   before.
+3. **One residual gray zone:** if the project's circumstances ever
+   changed (any commercial turn), the CC-NC data is not an asset that
+   transfers — the pipeline matrix in the vision doc exists so data
+   sources can be replaced cleanly if that day ever comes. A counsel
+   question for then, not now.
 4. Game-file extraction (`dat_parser`/`oodle_extractor`) remains
-   strategically prime — not as a licensing escape hatch anymore, but as
-   the post-GGG pipeline prototype and the eventual replacement for
-   scraping entirely.
+   strategically prime — the eventual replacement for scraping entirely,
+   and the most licensing-clean source there is (the user's own install).
 5. **Unverified residue:** poe.ninja's API terms and craftofexile/
    filterblade embedding policies produced no verifiable claims — treat
    as unknown; a friendly email to each (all small teams) settles it.
@@ -156,11 +151,11 @@ establish — no claims survived; ask GGG when registering the client.
 | # | Action | Owner | Cost |
 |---|---|---|---|
 | 1 | Add data attribution + CC BY-NC-SA license notices (About/credits UI, README, installer) — our actual compliance obligation as a free distributor | Feature Worker | — |
-| 2 | Email GGG once: read-only scrape/embed blessing + OAuth client registration; doubles as the acquisition relationship opener | Christian | — |
+| 2 | Email GGG once: read-only scrape/embed blessing + OAuth client registration | Christian | — |
 | 3 | Optional but recommended for adoption: Azure Artifact Signing (individual, US) wired into the release script — kills the SmartScreen wall | Christian + Feature Worker | ~$10/mo |
 | 4 | Email poe.ninja / Craft of Exile / FilterBlade: friendly heads-up + embedding OK-check | Christian | — |
 | 5 | Build W3-22 notifications ONLY on registered OAuth + PKCE + header-governed rate limiting (never POESESSID) | Feature Worker | — |
-| 6 | Keep Game-File R&D priority high — post-GGG pipeline prototype and eventual scrape replacement | routines | — |
+| 6 | Keep Game-File R&D priority high — eventual scrape replacement, cleanest source | routines | — |
 | 7 | (Dormant) If a paid build ever happens: apply the appendix — scraper-not-data, embed approval, counsel | — | counsel |
 
 ## Refuted during verification (excluded above)

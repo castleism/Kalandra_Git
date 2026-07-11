@@ -9,6 +9,18 @@ Repo: https://github.com/castleism/Kalandra_Git
 
 ## [Unreleased]
 
+### Changed — 2026-07-11 reframe: product first
+- The north-star docs are reframed around one question — would players
+  miss Kalandra? — with the long-game speculation removed from public
+  docs. `VISION_ACQUISITION.md` is now the product vision (pillars,
+  free-to-community model, and the pipeline-seam law justified on pure
+  engineering grounds: resilience, licensing hygiene, testability,
+  future flexibility). The dossier doc is parked in favor of
+  `docs/PRODUCT_HEALTH.md` (routine #8 is now a monthly Release
+  Readiness & Product Health review — update the installed routine's
+  prompt from `docs/ROUTINES.md`). Outreach drafts and GATING_RESEARCH
+  trimmed to plain compliance language.
+
 ### Added — 2026-07-10 data attribution & license notices (v1)
 - READ_ME_FIRST.md gains a "Data sources & licenses" section (poe2db /
   poe2wiki CC BY-NC-SA 3.0 attribution, poe.ninja credit, the standard

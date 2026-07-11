@@ -2,8 +2,7 @@
 
 *Drafted 2026-07-10 per `docs/GATING_RESEARCH.md` action items #2 and #4.
 Christian sends these from his own email; edit voice to taste. The GGG one
-matters most — it's simultaneously the compliance ask, the OAuth
-registration, and the first touch for the acquisition thesis. Verify the
+matters most — it's the compliance ask and the OAuth registration in one. Verify the
 current registration contact on pathofexile.com/developer/docs before
 sending (it has been oauth@grindinggear.com).*
 

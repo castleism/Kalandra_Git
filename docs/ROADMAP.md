@@ -4,13 +4,13 @@ Status of the security/compliance "gating work" identified in
 `docs/SECURITY_AND_PRIVACY.md`, the feature roadmap, and the routes we considered
 and deliberately did not take.
 
-> **North star (2026-07-10):** this roadmap is the **pre-GGG** track of
-> `docs/VISION_ACQUISITION.md` — build the pinnacle of PoE2 tooling from
-> public data, architected so every data pipeline can swap to direct game
-> integration on acquisition day. Hard rule that follows: **new data
-> sources go behind `core_engine/providers.py` seams**, with their post-GGG
-> swap plan recorded in the vision doc's pipeline matrix. The scheduled
-> worker routines that execute this roadmap live in `docs/ROUTINES.md`.
+> **North star (reframed 2026-07-11, product first):** build the PoE2
+> companion players would miss — see `docs/VISION_ACQUISITION.md`. Hard
+> rule that follows: **new data sources go behind
+> `core_engine/providers.py` seams**, with their best-future swap recorded
+> in the vision doc's pipeline matrix (resilience, licensing hygiene,
+> testability). The scheduled worker routines that execute this roadmap
+> live in `docs/ROUTINES.md`.
 
 > **Verified 2026-07-03** (Linux sandbox): all source files pass `py_compile`;
 > `tests/stress_test.py` passes **285/285** adversarial checks (was 111 on
@@ -28,7 +28,7 @@ and deliberately did not take.
 
 ## Gating work (must-haves before wide release)
 
-> Business model (2026-07-10): **free forever, exit = acquisition** — see
+> Business model (2026-07-10): **free to the community** — see
 > `docs/VISION_ACQUISITION.md` and `docs/GATING_RESEARCH.md` rev 2. Rows
 > below re-scoped accordingly.
 
@@ -38,7 +38,7 @@ and deliberately did not take.
 | Visible recording indicator + consent | ✅ DONE | — | Red “● REC” while recording; one-time consent dialog before first capture. |
 | Pin & audit dependencies | ◑ PARTIAL | low | Add a committed `requirements-lock.txt` (exact versions) and run `pip-audit` in CI. Floors are set; full lock pending so 3.13 wheels keep resolving. **Audited 2026-07-10** (`pip-audit -r requirements.txt`, Linux sandbox, resolves floors to current releases): **no known vulnerabilities**. The lock file itself must be generated on Windows (`pip freeze`) so it captures the wheels you actually run. |
 | Code-sign the Windows build | ☐ RECOMMENDED (not gating for a free tool) | low ($) | GATING_RESEARCH verdict: **Azure Artifact Signing, ~$9.99/mo**, individuals in the US eligible, no hardware token — kills the SmartScreen wall for adoption. Alternative: ship unsigned ($0, users click through the warning). Wire signtool into `make_release_zip.py` when adopted. |
-| Per-site ToS / licensing review | ◑ LARGELY RESOLVED for free distribution (2026-07-10) | low | GATING_RESEARCH rev 2: poe2db AND poe2wiki are CC BY-NC-SA — fine for a free tool with attribution + license notices (see new row below). Remaining: one outreach email to GGG (read-only scrape/embed blessing + OAuth client registration; also the acquisition opener) and friendly OK-checks with poe.ninja / Craft of Exile / FilterBlade. Paid-build analysis preserved in the doc's appendix. |
+| Per-site ToS / licensing review | ◑ LARGELY RESOLVED for free distribution (2026-07-10) | low | GATING_RESEARCH rev 2: poe2db AND poe2wiki are CC BY-NC-SA — fine for a free tool with attribution + license notices (see new row below). Remaining: one outreach email to GGG (read-only scrape/embed blessing + OAuth client registration) and friendly OK-checks with poe.ninja / Craft of Exile / FilterBlade. Paid-build analysis preserved in the doc's appendix. |
 | Data attribution + CC BY-NC-SA notices in-app (About/credits, README, installer) | ◑ v1 SHIPPED 2026-07-10 | low | v1: READ_ME_FIRST.md 'Data sources & licenses' section + in-app notice in the Database window (double-click the sync medallion). Remaining: a Settings/About credits entry and a line in the installer. |
 | Privacy policy | ✅ DONE 2026-07-10 | — | `docs/PRIVACY.md`: plain-words policy — local-first tables (incl. Craft Hunter's in-memory-only OCR crops), the exact when-and-what of AI-provider sends, fixed outbound host list, user controls/deletion. Still wants the pre-commercial legal review (tracked with the ToS row). |
 | Sandboxed file writes | ✅ DONE 2026-07-10 | — | All writes go under `data_engine/`; now formally documented in `docs/PRIVACY.md`'s local-first table (what lives where, incl. the `data_engine/` deletion instructions). |
