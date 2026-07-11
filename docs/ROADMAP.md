@@ -4,14 +4,6 @@ Status of the security/compliance "gating work" identified in
 `docs/SECURITY_AND_PRIVACY.md`, the feature roadmap, and the routes we considered
 and deliberately did not take.
 
-> **North star (reframed 2026-07-11, product first):** build the PoE2
-> companion players would miss — see `docs/VISION_ACQUISITION.md`. Hard
-> rule that follows: **new data sources go behind
-> `core_engine/providers.py` seams**, with their best-future swap recorded
-> in the vision doc's pipeline matrix (resilience, licensing hygiene,
-> testability). The scheduled worker routines that execute this roadmap
-> live in `docs/ROUTINES.md`.
-
 > **Verified 2026-07-03** (Linux sandbox): all source files pass `py_compile`;
 > `tests/stress_test.py` passes **285/285** adversarial checks (was 111 on
 > 07-02 — theme/chrome geometry, GitHub sync, crafting planner, pricing
@@ -26,22 +18,17 @@ and deliberately did not take.
 > confirmed on Windows (the sandbox has no GPU/EGL libraries) — the AST audit
 > exists precisely to cover that gap.
 
-## Gating work (must-haves before wide release)
-
-> Business model (2026-07-10): **free to the community** — see
-> `docs/VISION_ACQUISITION.md` and `docs/GATING_RESEARCH.md` rev 2. Rows
-> below re-scoped accordingly.
+## Gating work (must-haves before selling)
 
 | Item | Status | Effort | Notes |
 |---|---|---|---|
 | Remove plaintext secrets fallback (fail closed) | ✅ DONE | — | `account_manager` now stores only in the OS keychain; if keyring is missing, saving is disabled (no plaintext file). |
 | Visible recording indicator + consent | ✅ DONE | — | Red “● REC” while recording; one-time consent dialog before first capture. |
-| Pin & audit dependencies | ◑ PARTIAL | low | Add a committed `requirements-lock.txt` (exact versions) and run `pip-audit` in CI. Floors are set; full lock pending so 3.13 wheels keep resolving. **Audited 2026-07-10** (`pip-audit -r requirements.txt`, Linux sandbox, resolves floors to current releases): **no known vulnerabilities**. The lock file itself must be generated on Windows (`pip freeze`) so it captures the wheels you actually run. |
-| Code-sign the Windows build | ☐ RECOMMENDED (not gating for a free tool) | low ($) | GATING_RESEARCH verdict: **Azure Artifact Signing, ~$9.99/mo**, individuals in the US eligible, no hardware token — kills the SmartScreen wall for adoption. Alternative: ship unsigned ($0, users click through the warning). Wire signtool into `make_release_zip.py` when adopted. |
-| Per-site ToS / licensing review | ◑ LARGELY RESOLVED for free distribution (2026-07-10) | low | GATING_RESEARCH rev 2: poe2db AND poe2wiki are CC BY-NC-SA — fine for a free tool with attribution + license notices (see new row below). Remaining: one outreach email to GGG (read-only scrape/embed blessing + OAuth client registration) and friendly OK-checks with poe.ninja / Craft of Exile / FilterBlade. Paid-build analysis preserved in the doc's appendix. |
-| Data attribution + CC BY-NC-SA notices in-app (About/credits, README, installer) | ◑ v1 SHIPPED 2026-07-10 | low | v1: READ_ME_FIRST.md 'Data sources & licenses' section + in-app notice in the Database window (double-click the sync medallion). Remaining: a Settings/About credits entry and a line in the installer. |
-| Privacy policy | ✅ DONE 2026-07-10 | — | `docs/PRIVACY.md`: plain-words policy — local-first tables (incl. Craft Hunter's in-memory-only OCR crops), the exact when-and-what of AI-provider sends, fixed outbound host list, user controls/deletion. Still wants the pre-commercial legal review (tracked with the ToS row). |
-| Sandboxed file writes | ✅ DONE 2026-07-10 | — | All writes go under `data_engine/`; now formally documented in `docs/PRIVACY.md`'s local-first table (what lives where, incl. the `data_engine/` deletion instructions). |
+| Pin & audit dependencies | ◑ PARTIAL | low | Add a committed `requirements-lock.txt` (exact versions) and run `pip-audit` in CI. Floors are set; full lock pending so 3.13 wheels keep resolving. |
+| Code-sign the Windows build | ☐ TODO | med ($) | Requires an Authenticode cert (~$100–400/yr) + signing in the build pipeline. Removes SmartScreen warnings. |
+| Per-site ToS / licensing review | ☐ TODO | med (legal) | Especially: poe2wiki is **CC BY-NC** (non-commercial) — redistributing it in a paid product needs review/relicensing. Confirm poe2db, poe.ninja, Craft of Exile commercial terms. |
+| Privacy policy | ☐ TODO | low | State what's processed locally vs sent to the chosen AI provider. |
+| Sandboxed file writes | ◑ PARTIAL | low | All writes already go under `data_engine/`; formalize + document. |
 
 ### How to do the dependency audit now (low-hanging)
 ```
@@ -114,7 +101,7 @@ diamonds), currency-orb iconography. Gorgeous, everywhere.
 | ID | Item | Status | Effort | Plan |
 |---|---|---|---|---|
 | W3-20 | **Ctrl+C price popup** (Exiled Exchange 2 / PoE Overlay style) | ✅ DONE 2026-07-03 — needs Christian's in-game test (checklist G1) | L | Shipped: Qt clipboard watcher (no hotkey lib needed — Windows notifies all clipboard changes), themed cursor-side card with parsed item, instant currency estimate (gear never fabricated), Trade ↗ + pre-filled Price Check button, 12s auto-dismiss/ESC, Settings toggle. |
-| W3-21 | Price Check tab: **intuitive interface** | ✅ v3 CODE DONE 2026-07-10 — needs Christian's live test (open a search, confirm the filters arrive pre-filled) | M | v2: per-mod tier view + strategy verdict + embedded trade site. v3 (the remaining half): parsed item -> trade query JSON via the site's stat-id map (`/api/trade2/data/stats`, fetched once, cached 7 days in `data_engine/trade_stats_poe2.json`) -> `…?q=<json>`. Premium/good mods enabled at your rolls ("at least as good as mine", two-slot mods by average), the rest included but disabled; unmapped mods reported honestly. Plain search URL any time the map isn't ready. Clipboard popup's Trade ↗ upgrades too. `tests/trade_query_checks.py` (35). Sandbox couldn't reach the live endpoint, so the query-vs-site handshake is the thing to eyeball. |
+| W3-21 | Price Check tab: **intuitive interface** | ◑ v2 SHIPPED 2026-07-03 | M | Shipped: per-mod tier view + strategy verdict, AND the official trade site now embedded IN the tab (contained browser; "Open trade search" loads it right there). Remaining: push the parsed item's filters INTO the embedded site — route: build the trade query JSON (needs the site's stat-id map, fetchable from its /api/trade2/data/stats endpoint) and load `…/search/poe2/<league>?q=<json>`; fallback: inject via the web view's JS bridge. |
 | W3-22 | **Saved searches + scheduled live searches** | ◑ SAVED done 2026-07-03; scheduler TODO | M | Shipped: named saves (item + league) in Price Check with load/delete dropdown. Remaining: interval re-runs with new-listing notifications. |
 | W3-23 | **Pricing insight engine** | ◑ v1 SHIPPED 2026-07-03 | L | Shipped: heuristic mod-value tiers (which mods drive price / can be excluded / lower value) + strategy advice, wired into Price Check. Remaining: empirical with/without trade-result sampling and suggested listing price. |
 | W3-24 | Live Search tab: **embedded trade site** | ✅ DONE 2026-07-03 | M | Shipped: "Open here" loads the trade site in the tab (crash-safe lazy QWebEngineView); "Browser ↗" keeps the external path; graceful card when PyQt6-WebEngine is missing. Whisper/buy stays manual. |
@@ -126,10 +113,10 @@ diamonds), currency-orb iconography. Gorgeous, everywhere.
 | ID | Item | Status | Effort | Plan |
 |---|---|---|---|---|
 | W3-30 | Filter Editor: **redesign for humans** | ◑ v1 SHIPPED 2026-07-03 | L | Shipped: plain-language block lines ("SHOW: Divine Orb · area >= 65"), painted color-swatch chips, live in-game label preview pane, gem action buttons, framed save confirm. Round-trip + `.bak` untouched. Remaining: category grouping + drag-to-reorder. |
-| W3-31 | Unique/BiS Reserve tab: **snapshot item scanner** | ✅ v2 SHIPPED 2026-07-10 | L | v1: snapshot strip (newest ruby-medallion screenshots, view/open-folder/rescan) + one-click clipboard filing. v2: "🔍 Read item from snapshot" — OCRs the selected screenshot straight into the editor (2x upscale; the SAME optional adapters Craft Hunter ships: RapidOCR preferred, Tesseract fallback; feature explains the pip install when neither exists), auto-fills the name from the parsed text. Ctrl+C paste remains the exact route; the UI says OCR isn't gospel. |
+| W3-31 | Unique/BiS Reserve tab: **snapshot item scanner** | ◑ v1 SHIPPED 2026-07-03; OCR TODO | L | Shipped: snapshot strip in the Reserve tab (newest ruby-medallion screenshots, view/open-folder/rescan) + one-click clipboard filing. Remaining: pytesseract OCR of the tooltip so the paste step disappears. |
 | W3-32 | Issues/Changelog → **GitHub repo** | ✅ CODE DONE 2026-07-03 — needs Christian's token (Settings → GitHub → "Get a key") for a live test | M | Shipped: `core_engine/github_sync.py` (issues + changelog-as-prerelease, fail-closed auth, tolerant repo parsing), Settings "GitHub" keychain row, Issues-tab buttons "Post selected → GitHub" / "Publish changelog → GitHub". Repo: **https://github.com/castleism/Kalandra_Git**. |
 
-| W3-33 | **Photo item scanner** (snapshot → item) | ✅ DONE 2026-07-10 — needs Christian's on-Windows visual check (pick a screenshot, confirm the parsed text) | M | `core_engine/photo_scanner.py`: two engines, best available wins. AI vision goes first when the user's already-configured AI brain has a key (`VoiceEngine.ai_read_image`, new OpenAI/Anthropic/Gemini vision calls) — far more accurate on PoE2's stylized fonts, a fraction of a cent per scan. Offline OCR (Craft Hunter's shared RapidOCR/Tesseract adapters, 2x upscale) is the free fallback and the sole path with no key configured. Replaces the old Tesseract-only v1 that shipped quietly in Price Check's "Scan screenshot…" button (was undocumented here) — same output feeds the SAME parse_item_text pipeline as Ctrl+C, so Reserve bank, price check, and insights all work from a photo. `tests/photo_scan_checks.py` (28 checks, engine fallback fully exercised via injection — no OCR install or API key needed in CI). |
+| W3-33 | **Photo item scanner** (snapshot → item) | ☐ TODO | M | Two engines, best available wins: (a) offline Tesseract OCR on the tooltip crop (upscale 2x + threshold — PoE tooltips are high-contrast, OCR-friendly), (b) the multimodal AI brain reads the image directly (far more accurate on stylized fonts, ~fraction of a cent per scan, uses the key already in Settings). Output feeds the SAME parse_item_text pipeline as Ctrl+C — so Reserve bank, price check, and insights all work from a screenshot. |
 | W3-34 | **Video fight analyzer** (clip → DPS/buffs/effects) | ☐ TODO | XL | Post-fight analysis of our OWN recordings (media_recorder already writes MP4s; opencv+numpy already installed). Phase 1: boss HP bar tracking by pixel-fill sampling at ~3fps → HP% curve → time-to-kill, and real DPS once boss HP totals come from the DB. Phase 2: buff/debuff icon detection via opencv template-matching against icon sprites from the scraped data. Phase 3: multimodal AI labels keyframes (ground effects, environment). Purely passive post-processing of recordings = ToS-clean (see 'Under ToS review' — we read pixels, never send input). |
 
 ## Feature Wave 4 — THE COMPANION (spec: `docs/DESIGN_COMPANION.md`)
@@ -144,10 +131,10 @@ diamonds), currency-orb iconography. Gorgeous, everywhere.
 | W4-01 | Owl guide: mirror's owl as menu companion (bubbles + tab walkthroughs) | ✅ SHIPPED 2026-07-04 | M | `owl_guide.py`; owl face + arrow finial cut from the mirror art. |
 | W4-02 | Player profile + first-use interview (chip bubbles, leech-aware wording) | ✅ SHIPPED 2026-07-04 | M | `player_profile.py`, `owl_interview.py`; profile injected into every AI prompt. Right-click owl to redo. |
 | W4-03 | Companion tab: threaded orb chats + friendly color-coded action log | ✅ v1 SHIPPED 2026-07-04 | L | `companion_tab.py`; auto-attendant stub (local templates, off by default). |
-| W4-04 | PoB import + character deep-scan (auth via saved account, name or class/lvl/league) | ☐ TODO | L | Spec: `docs/CHARACTER_IMPORT_SPEC.md` (2026-07-10, supersedes the DESIGN_COMPANION P1 sketch with full detail). P1 there (manual code/link → `CharacterFolio` + profile inference) needs no new auth and is independently shippable; PoB-embedded import and the optional POESESSID character-list lookup are P2/P3. |
+| W4-04 | PoB import + character deep-scan (auth via saved account, name or class/lvl/league) | ☐ TODO | L | DESIGN_COMPANION P1. Infer profile facts from imports instead of asking. |
 | W4-05 | Character reviews + per-character orb threads + standard-shuffle detection | ☐ TODO | L | P2. Owl confirms playstyle/gear drift on review open. |
-| W4-06 | Nerf-aware price intelligence (patch-note diff + league price curves) | ◑ v2 WIRED 2026-07-10 | L | P3. Engine (2026-07-04) + the real feeds (2026-07-10): `patches_from_db` mines patch-note/Version pages from the knowledge base, `price_series_from_db` reads the Exchange tab's `economy_history` snapshots, `nerf_watch()` is the one-call signal — and Price Check now shows an amber "🪓 Nerf watch" line for named items (background thread, local DB only). `tests/nerf_checks.py` 43 green. Remaining: surface in character reviews (W4-05 path). |
-| W4-00 | Provider interfaces — every 3rd-party tool swappable (north star) | ◑ ONGOING — core ✅ 2026-07-04 | M | `core_engine/providers.py`: BuildCalculator / Economy / TradeSearch / CraftSimulator / GameData / Capture / **ItemInHand (new 2026-07-10)** + registry; migrate call sites opportunistically. The weekly Provider-Boundary Auditor routine tracks remaining bypasses in `docs/PROVIDER_AUDIT.md` — 6 open as of 2026-07-10 (RAG duplicate `game_data.search()`, 2× raw-sqlite on `localized_knowledge.db`, 3× duplicate OCR call sites, direct `poe2db.tw` fetch in `item_art.py`, Exchange tab bypassing `economy`). |
+| W4-06 | Nerf-aware price intelligence (patch-note diff + league price curves) | ◑ ENGINE 2026-07-04 | L | P3. `nerf_intel.py` shipped + 30 checks green (patch signal, price cliffs, Temple-Headhunter supply-vs-nerf distinction). Remaining: feed it real patch notes from the DB + poe.ninja history, surface in reviews/price check. |
+| W4-00 | Provider interfaces — every 3rd-party tool swappable (north star) | ✅ SHIPPED 2026-07-04 | M | `core_engine/providers.py`: BuildCalculator / Economy / TradeSearch / CraftSimulator / GameData / Capture + registry; migrate call sites opportunistically. |
 | W4-07 | Character folders + roadmap files + PoB-as-calculator + build costing | ◑ FOUNDATION 2026-07-04 | XL | P4. `character_folio.py` shipped (folders, scaffold docs, budgeted prompt corpus). Remaining: review/roadmap generation, craft-vs-buy, character sheet panel. |
 | W4-08 | BIS bank ↔ AI sims, live-search suggestions, notifications (desktop/email/SMS + orb bubble w/ trade link) | ☐ TODO | L | P5. Variant selectors (ilvl/spell level) in Reserve tab. |
 | W4-09 | Auto-attendant researched edition (cadence + token-budget settings per topic) | ☐ TODO | XL | P6. Sources: build sites, YouTube, Reddit, forums, Twitch; sim-verified suggestions. |
@@ -162,6 +149,9 @@ diamonds), currency-orb iconography. Gorgeous, everywhere.
 | W4-17 | Modern email auth: Gmail OAuth2+PKCE+XOAUTH2, keychain-only tokens | ✅ SHIPPED 2026-07-04 | M | `email_oauth.py`; app passwords = legacy fallback. Notification sender (P5) plugs into `send_mail_oauth`. |
 | W4-18 | Build (PoB) AI review button: mechanism deduction + sim-verifiable suggestions | ✅ v1 SHIPPED 2026-07-04 | L | W4-05's per-character review, on demand in the Build tab; saves to the folio. Remaining: auto-generate on import (W4-04) + standard-shuffle detection. |
 | W4-19 | New-player arc: build finder conversation + guide→priced roadmap engine | ✅ v1 SHIPPED 2026-07-04 | L | `build_seeker.py` + owl hand-off + Companion seeding. Remaining: auto-fetch guide URLs (today: paste text/codes), auto-load variants into the PoB (live) tab, live-search auto-creation from watchlist (W4-08). |
+| W4-30 | **Scaling & BIS Advisor** — tag-graph reverse lookup → PoB weighted tree → BIS craft planner → Craft of Exile (spec: `docs/SCALING_ADVISOR_SPEC.md`) | ◑ P1 SHIPPED 2026-07-11 | XL | P1 done: `core_engine/tag_graph.py` reverse-looks-up assets sharing an entity's real tags (idf-weighted), wired into the Orb's grounding as a "SCALING SOURCES (from DB)" block; 28 checks. Remaining: P1.5 tag extraction for uniques/mods/passives (only gems tagged today), P2 PoB weighted tree, P2.5 community tags, P3 BIS craft planner, P4 poe.ninja meta-mining. |
+| W4-31 | Crawl drains to completion (retry skipped pages, mark 404s dead) | ✅ SHIPPED 2026-07-11 | S | `scraper.crawl_until_drained`: re-queues transient skips and re-crawls until nothing retryable remains; 25-pass cap + stall guard; 404/410 → `dead`. Sync uses it by default (`crawl_drain`). |
+| W4-32 | **Community Quest Board** — crowdsourced data upkeep, verify-before-close lifecycle (spec: `docs/COMMUNITY_QUEST_BOARD_SPEC.md`) | ☐ TODO | L | Auto-generates quests from untagged entities / new pages / patch changes / unverified community tags; `open→claimed→submitted→verified→closed`, cannot close without verification, auto-reopens on regression. P1 = local board. |
 | W4-20 | Install modes per add-on: "Local Copy" (default OS location, app points at it) / "Kalandra Contained" (bundled under tools\) / "Browser based" (contained web tab, e.g. pob.cool) | ☐ TODO | L | Installer redesign: Kalandra-Setup.ps1 asks per add-on; default flips FROM contained TO local-copy (%LOCALAPPDATA%\Programs), with detection of existing installs at standard paths (gui_overlay/dependencies.py already probes several). The uninstaller's Move-out (shipped 2026-07-04) is the migration path for existing bundles. Browser-based mode = custom web tab presets (W4-16 machinery). |
 
 ### Suggested build order
@@ -182,24 +172,11 @@ ToS note (unchanged, hard rule): W3-20 reads the clipboard that the game
 itself populates on Ctrl+C. No input is ever sent to the game; every buy,
 whisper, and click in game is the player's.
 
-## Feature Wave 5 — Craft Hunter (spec: `docs/CRAFT_HUNTER_SPEC.md`)
-
-> Alert-only crafting mod sniper (spec written 2026-07-06). Hard rule from
-> the spec (§2), same as everywhere else in Kalandra: **no input
-> interception, ever** — we read what the game shows/writes, we never touch
-> the game. The alarm informs the human; the human does every click.
-
-| ID | Item | Status | Size | Notes |
-|---|---|---|---|---|
-| CH-P1 | Regex helper: target-mod list UI (autocomplete from `localized_knowledge.db` + curated templates), in-game stash-search regex generator (PoE dialect, ≤50 chars, honest budget degradation), clipboard-confirm HIT / keep-going wired into the W3-20 watcher | ✅ SHIPPED 2026-07-10 | M | `core_engine/craft_hunter.py` (pure engine, OCR-noise-tolerant matcher ready for P2) + `gui_overlay/craft_hunter.py` (tab in 🔨 Crafting + cursor toast); armed hunts replace the price popup. `tests/craft_checks.py` (78) all green. |
-| CH-P2 | OCR watcher: one-time tooltip crop calibration, hash-skip capture loop, RapidOCR (optional import, pytesseract fallback), full-screen click-through flash + loud sound + F8 arm hotkey | ✅ CODE DONE 2026-07-10 — needs Christian's on-Windows check (calibrate → watch → flash/sound; use Windowed Fullscreen) | L | Watcher loop fully unit-tested with injected capture/OCR; flash is `WindowTransparentForInput` (can only be looked at); F8 = passive GetAsyncKeyState poll (ghost mode's Ctrl pattern, no hook). OCR engines lazy + optional (`rapidocr-onnxruntime` preferred, ~60 MB — kept OUT of the default install, commented in requirements.txt). Clipboard confirm stays authoritative. |
-| CH-P3 | Polish: session stats → grind_tracker (orbs-per-hit), per-target sounds, essence/omen-aware hints from `offline_craft_guidance`, near-miss soft chime | ◑ v1 SHIPPED 2026-07-10 | M | Shipped: near-miss detection (amber, right-mod-low-roll), Route hints button (essence/chaos/omen routes + live prices), confirms-per-hit in session stats. Remaining: push stats into grind_tracker's per-mod tables; per-target sounds. |
-
 ## In progress / partial
 
 | Item | Status |
 |---|---|
-| Game-file data extraction | ◑ In-process Oodle bundle decode confirmed working end-to-end on a real install (`oodle_extractor.py`, wired into `poe2_data_extract.auto_update()`); import of pre-extracted JSON/external-converter route stays as fallback. Remaining: schema-driven column parsing only validated with a synthetic schema (real `schema.min.json` needs a network fetch to confirm); only tested on one install/game version so far |
+| Game-file data extraction | ◑ Import of pre-extracted JSON done; in-process Oodle bundle decode TODO |
 | PoB "unsupported mods" | ◑ Needs `unsupported.txt` from PoB dev mode; then add patterns to PoB's `ModParser.lua` |
 | Your own (non-ladder) PoE2 characters via API | ☐ Blocked on GGG shipping the PoE2 OAuth API (letter drafted: `docs/GGG_OAuth_Application_Letter.md`) |
 | Higher-fidelity face rig (layered art, blinks) | ☐ Optional — drop in layered mouth/eye art (`docs/VISEME_FACE_SETUP.md`) |
@@ -211,13 +188,8 @@ whisper, and click in game is the player's.
 1. **"Hey Kalandra" wake word** — lightweight always-on detector (low CPU) that
    only wakes transcription when it hears the phrase.
 2. **ElevenLabs voices** — premium cloud TTS alongside the free local voice.
-3. **DB status window** — ✅ SHIPPED 2026-07-10 (double-click the sync
-   medallion: active DB path/size, pages, last sync, per-patch and
-   per-source histograms, crawl frontier, source picker editing the same
-   `sources_enabled` the sync worker honors, Sync-now button;
-   `database_handler.db_status` is read-only + `tests/db_status_checks.py`
-   (11)). Remaining nicety: a live "newer patch exists" probe — today the
-   window shows last-sync age and says to re-sync after patches.
+3. **DB status window** — double-click the sync medallion: active database,
+   last sync, newer-patch check, primary-source picker.
 4. **PoE Overlay II Standalone** — add to the integrations list in setup/settings.
 5. **Lock + audit dependencies** (quick win, see above).
 
@@ -236,9 +208,7 @@ whisper, and click in game is the player's.
 - **Investment tracker** — currency invested per craft, alongside Reserve/BIS;
   alert on pickup of items matching wanted expedition-reforge mods.
 - **Temple planner.**
-- **Overlay transparency slider** (Settings) — ✅ SHIPPED 2026-07-10: live
-  slider (35–100%), read from config every paint so it applies as you drag;
-  ghost mode's fade multiplies on top of it.
+- **Overlay transparency slider** (Settings).
 - **Minimize-to-icon** when a menu opens, so two windows aren't fighting to
   stay on top.
 
@@ -294,3 +264,4 @@ whisper, and click in game is the player's.
 - **Waiting on GGG OAuth for personal characters** — deferred, not rejected:
   the PoE2 account API doesn't exist yet, so ladder browsing + PoB codes are
   the interim path. Revisit when GGG ships it.
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 

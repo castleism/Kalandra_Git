@@ -254,7 +254,9 @@ class KalandraScraper:
             resp = sess.get(url, timeout=20)
             if (resp.status_code != 200
                     or "text/html" not in resp.headers.get("Content-Type", "")):
-                return {"url": url, "ok": False}
+                # Carry the status so the recorder can tell a permanent 404/410
+                # (don't retry) from a transient hiccup (retry on the next pass).
+                return {"url": url, "ok": False, "status": resp.status_code}
             title, text, version, links, tags = self._parse(resp.text, url)
             return {"url": url, "ok": True, "title": title, "text": text,
                     "version": version, "links": links, "tags": tags}
@@ -374,7 +376,11 @@ class KalandraScraper:
                             self._enqueue(link)
                     self._mark(url, "done")
                 else:
-                    self._mark(url, "skip")
+                    # Permanent (404/410) -> 'dead', never retried. Everything
+                    # else (timeout, rate-limit, 5xx, connection drop) -> 'skip',
+                    # which the drain loop re-queues for another attempt.
+                    code = result.get("status")
+                    self._mark(url, "dead" if code in (404, 410) else "skip")
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=concurrency) as pool:
             in_flight = {}
@@ -435,137 +441,29 @@ class KalandraScraper:
                 "pending": pending, "elapsed_min": round(elapsed / 60, 1),
                 "rate_per_min": round(rate)}
 
-    def stats(self):
-        self.db.cursor.execute("SELECT COUNT(*) FROM knowledge_ledger")
-        ledger = self.db.cursor.fetchone()[0]
-        self.db.cursor.execute("SELECT COUNT(*) FROM crawl_state WHERE status='done'")
-        done = self.db.cursor.fetchone()[0]
-        return {"ledger_rows": ledger, "pages_done": done}
+    def _count_status(self, status):
+        with self._db_lock:
+            self.db.cursor.execute(
+                "SELECT COUNT(*) FROM crawl_state WHERE status=?", (status,))
+            return self.db.cursor.fetchone()[0]
 
-    # Boilerplate that appears on EVERY poe2db page (site nav + the language
-    # selector). It used to dominate every RAG snippet (and the CJK in it could
-    # crash logging on a non-UTF-8 console), so we strip it before returning.
-    _BOILERPLATE_MARKERS = (
-        "Update cookie preferences", "繁體中文", "简体中文", "한국어", "Japanese",
-        "Русский", "Português", "ภาษาไทย", "Français", "Deutsch", "Spanish",
-        "TW ", "CN ", "US English", "KR ", "JP ", "RU ", "PO ", "TH ", "FR ", "DE ", "ES ",
-        "Patreon", "PoE\nDB", "PoE2\nDB",
-    )
+    def crawl_until_drained(self, max_pages=50000, seeds=None, stop_flag=None,
+                            concurrency=10, delay=0.0, max_rounds=25):
+        """Crawl, then keep re-queuing pages that were SKIPPED (timeouts, rate
+        limits, transient 5xx) and crawl again — repeating until a full pass
+        leaves nothing retryable. "Nothing retryable" means the frontier is
+        empty AND the only failures left are permanent (404/410, marked 'dead')
+        or genuinely stuck.
 
-    @classmethod
-    def _clean_content(cls, text):
-        """Drop the repeated site-nav/language-menu lines and collapse the
-        whitespace so what's left is the page's actual substance."""
-        if not text:
-            return ""
-        lines = []
-        for raw in text.splitlines():
-            ln = raw.strip()
-            if not ln:
-                continue
-            if any(m.strip() and m.strip() in ln for m in cls._BOILERPLATE_MARKERS):
-                continue
-            # Single-word nav crumbs (language codes, menu items) add no value.
-            if len(ln) <= 2:
-                continue
-            lines.append(ln)
-        return " ".join(lines)
-
-    @classmethod
-    def _snippet_around(cls, content, term, width=420):
-        """Return a window of cleaned text centered on where `term` actually
-        occurs, instead of the page's first 600 chars (which were always nav)."""
-        cleaned = cls._clean_content(content)
-        if not cleaned:
-            return ""
-        low = cleaned.lower()
-        idx = low.find(term.lower()) if term else -1
-        if idx < 0:
-            return cleaned[:width]
-        start = max(0, idx - width // 4)
-        snippet = cleaned[start:start + width]
-        return ("…" + snippet) if start > 0 else snippet
-
-    def search(self, term, limit=6):
-        """Keyword retrieval for grounding AI answers (RAG context). Returns a
-        snippet centered on the match, with site boilerplate stripped, so the AI
-        sees the relevant content rather than every page's identical menu.
-
-        Uses the FTS5 index (bm25-ranked, so the MOST relevant page for the term
-        comes first) when available, and falls back to a LIKE scan otherwise."""
-        term = (term or "").strip()
-        if not term:
-            return []
-        rows = self._search_rows(term, limit)
-        out = []
-        for row in rows:
-            t, c, u = row[0], row[1], row[2]
-            tags = row[3] if len(row) > 3 else ""
-            snip = self._snippet_around(c, term)
-            if not snip:
-                continue
-            # Surface poe2db's real tags inline so the AI grounds on the game's
-            # actual tag set (e.g. sees that Corrupted Blood is Physical/DoT and
-            # carries NO Bleed tag) instead of guessing tag relationships.
-            tagpart = f" [tags: {tags}]" if tags else ""
-            out.append(f"{t}{tagpart} ({u}): {snip}")
-        return out
-
-    @staticmethod
-    def _fts_query(term):
-        """Turn a raw term into a safe FTS5 MATCH query. We quote each word as a
-        phrase token so punctuation/operators in the term can never be
-        interpreted as FTS syntax (and can't inject). Multi-word terms like
-        'Lightning Arrow' become a ranked AND of the two words."""
-        import re as _re
-        words = _re.findall(r"[A-Za-z0-9]+", term)
-        if not words:
-            return None
-        return " AND ".join('"%s"' % w for w in words)
-
-    def _search_rows(self, term, limit):
-        """(topic_tag, content_payload, source_url) rows for `term`, ranked by
-        relevance via FTS5 when the index is present; LIKE scan as a fallback."""
-        if getattr(self.db, "fts_enabled", False):
-            q = self._fts_query(term)
-            if q:
-                try:
-                    # bm25 column weights (topic_tag, tags, content_payload): a
-                    # hit on the page's title or its real tag set outranks a hit
-                    # buried in body text, so the right page surfaces first.
-                    self.db.cursor.execute(
-                        "SELECT l.topic_tag, l.content_payload, l.source_url, l.tags "
-                        "FROM knowledge_fts f "
-                        "JOIN knowledge_ledger l ON l.id = f.rowid "
-                        "WHERE knowledge_fts MATCH ? "
-                        "ORDER BY bm25(knowledge_fts, 5.0, 4.0, 1.0) LIMIT ?",
-                        (q, limit),
-                    )
-                    rows = self.db.cursor.fetchall()
-                    if rows:
-                        return rows
-                except Exception:
-                    pass  # fall through to LIKE
-        like = f"%{term}%"
-        self.db.cursor.execute(
-            "SELECT topic_tag, content_payload, source_url, tags FROM knowledge_ledger "
-            "WHERE content_payload LIKE ? OR topic_tag LIKE ? OR tags LIKE ? LIMIT ?",
-            (like, like, like, limit),
-        )
-        return self.db.cursor.fetchall()
-
-
-if __name__ == "__main__":
-    import sys, os
-    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    from core_engine.database_handler import KalandraDBHandler
-
-    db = KalandraDBHandler()
-    sc = KalandraScraper(db, logger=lambda c, m: print(f"[{c}] {m}"))
-    if not SCRAPER_AVAILABLE:
-        print(sc.availability_message())
-    else:
-        # Small demo crawl.
-        sc.crawl(max_pages=15)
-        print("STATS:", sc.stats())
-    db.close()
+        Always terminates, three ways:
+          * clean drain  — no queued and no skipped pages remain;
+          * stall guard  — the skipped-page count stops shrinking for 2 rounds
+                            (those URLs are effectively unreachable right now);
+          * round cap     — `max_rounds` reached.
+        Pages left as 'skip' get another chance on the next scheduled sync.
+        Returns aggregate totals plus round/remaining counts."""
+        if not SCRAPER_AVAILABLE:
+            self._log("DATABASE",
+                      "Scraper unavailable: " + self.availability_message())
+            return {"stored": 0, "updated": 0, "processed": 0, "pending": 0,
+                    "rounds": 0, "remaining_skips": 0,

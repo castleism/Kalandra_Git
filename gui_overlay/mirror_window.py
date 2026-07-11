@@ -131,6 +131,8 @@ ReserveTracker = _safe_import("reserve_tracker",
     lambda: __import__("core_engine.reserve_tracker", fromlist=["ReserveTracker"]).ReserveTracker)
 KnowledgeCorrections = _safe_import("knowledge_corrections",
     lambda: __import__("core_engine.knowledge_corrections", fromlist=["KnowledgeCorrections"]).KnowledgeCorrections)
+KalandraTagGraph = _safe_import("tag_graph",
+    lambda: __import__("core_engine.tag_graph", fromlist=["KalandraTagGraph"]).KalandraTagGraph)
 IssueTracker = _safe_import("issue_tracker",
     lambda: __import__("core_engine.issue_tracker", fromlist=["IssueTracker"]).IssueTracker)
 
@@ -1870,29 +1872,6 @@ if PYQT_AVAILABLE:
             load_builds = QPushButton("Load my saved PoB builds")
             load_builds.clicked.connect(self._load_pob_builds)
             pl.addWidget(load_builds)
-
-            # Direct controls so a build is never stuck: point Kalandra at the
-            # PoB install/Builds folder, launch that PoB, or load a .xml
-            # straight off disk (works even when the scan misses it).
-            drow = QHBoxLayout()
-            locate_btn = QPushButton("Locate PoB…")
-            locate_btn.setToolTip("Point Kalandra at your Path of Building "
-                                  "folder (its install folder or its Builds "
-                                  "folder). Saved so it always scans yours.")
-            locate_btn.clicked.connect(self._locate_pob)
-            drow.addWidget(locate_btn)
-            launch_btn = QPushButton("Launch PoB")
-            launch_btn.setToolTip("Open the Path of Building that Kalandra is "
-                                  "pointed at (no code needed).")
-            launch_btn.clicked.connect(self._launch_pob_only)
-            drow.addWidget(launch_btn)
-            loadfile_btn = QPushButton("Load build file…")
-            loadfile_btn.setToolTip("Pick a PoB build .xml directly — the "
-                                    "surest way to pull in a specific "
-                                    "character.")
-            loadfile_btn.clicked.connect(self._load_build_file)
-            drow.addWidget(loadfile_btn)
-            pl.addLayout(drow)
             root.addWidget(pob_box)
 
             ladder_lbl = QLabel("— or browse the public ladder / wait for GGG's account API —")
@@ -2192,98 +2171,6 @@ if PYQT_AVAILABLE:
             self.status.setText("Scanning your Path of Building builds folder...")
             threading.Thread(target=self._builds_worker, daemon=True).start()
 
-        def _locate_pob(self):
-            """Let the user point Kalandra at their PoB folder. Accepts either
-            the install folder OR the Builds folder; saves it to config so
-            every future scan (and the PoB-live tab) uses THIS install."""
-            from PyQt6.QtWidgets import QFileDialog
-            start = (self.config.get("pob_install_dir")
-                     or self.config.get("pob_builds_dir") or "")
-            d = QFileDialog.getExistingDirectory(
-                self, "Select your Path of Building folder (install or Builds)",
-                start)
-            if not d:
-                return
-            base = os.path.basename(d.rstrip("\\/")).lower()
-            if base == "builds":
-                self.config["pob_builds_dir"] = d
-                self.config["pob_install_dir"] = os.path.dirname(d.rstrip("\\/"))
-            else:
-                self.config["pob_install_dir"] = d
-                bd = os.path.join(d, "Builds")
-                if os.path.isdir(bd):
-                    self.config["pob_builds_dir"] = bd
-            # If a PoB exe lives here, remember it too (enables Launch PoB).
-            try:
-                exe = self.pob.find_pob_exe() if self.pob else None
-                for cand in (os.path.join(self.config["pob_install_dir"],
-                                          "Path of Building.exe"),
-                             os.path.join(self.config["pob_install_dir"],
-                                          "PathOfBuilding.exe")):
-                    if os.path.exists(cand):
-                        exe = cand
-                        break
-                if exe:
-                    self.config["pob_exe"] = exe
-            except Exception:
-                pass
-            save_config(self.config)
-            self.status.setText("PoB folder saved — scanning it now…")
-            self._load_pob_builds()
-
-        def _launch_pob_only(self):
-            """Open the configured/discovered PoB app directly — no pasted
-            code required. Answers 'let me launch the PoB it's looking at'."""
-            if not self.pob:
-                self.status.setText("PoB bridge not available.")
-                return
-            ok, msg = self.pob.launch_path_of_building(
-                self.config.get("pob_exe"))
-            if not ok:
-                # Offer to locate the exe so the button works next time.
-                from PyQt6.QtWidgets import QFileDialog
-                exe, _ = QFileDialog.getOpenFileName(
-                    self, "Locate Path of Building (.exe)",
-                    self.config.get("pob_install_dir", ""),
-                    "Path of Building (*.exe)")
-                if exe:
-                    self.config["pob_exe"] = exe
-                    self.config["pob_install_dir"] = os.path.dirname(exe)
-                    save_config(self.config)
-                    ok, msg = self.pob.launch_path_of_building(exe)
-            self.status.setText(("✓ " if ok else "⚠ ") + msg)
-
-        def _load_build_file(self):
-            """Pick a PoB build .xml directly and load it — the surest way to
-            pull in a specific character when the folder scan misses it."""
-            from PyQt6.QtWidgets import QFileDialog
-            start = (self.config.get("pob_builds_dir")
-                     or self.config.get("pob_install_dir") or "")
-            path, _ = QFileDialog.getOpenFileName(
-                self, "Select a PoB build file", start,
-                "PoB build (*.xml);;All files (*.*)")
-            if not path:
-                return
-            if not self.on_load_build_file:
-                self.status.setText("Build-loading isn't wired in this build.")
-                return
-            try:
-                self.on_load_build_file(path)
-                # Remember the folder so the scan finds siblings next time.
-                self.config.setdefault("pob_builds_dir", os.path.dirname(path))
-                save_config(self.config)
-                self.status.setText(
-                    f"Loaded {os.path.basename(path)} — it's now the active "
-                    "build (open the Build (PoB) tab to see it).")
-                if self.on_select:
-                    try:
-                        self.on_select(os.path.splitext(
-                            os.path.basename(path))[0])
-                    except Exception:
-                        pass
-            except Exception as e:
-                self.status.setText(f"Couldn't load that build: {e}")
-
         def _builds_worker(self):
             """Scan for saved PoB builds OFF the UI thread (the scan walks the
             filesystem and parses XML, so it must never run on the UI thread)."""
@@ -2327,14 +2214,9 @@ if PYQT_AVAILABLE:
                 QMessageBox.information(
                     self, "No saved builds found",
                     "I looked for PoB build files (.xml) in:\n\n" + scanned +
-                    "\n\nThree ways to fix this:\n"
-                    "  • Click 'Locate PoB…' and point me at your Path of "
-                    "Building folder (I'll remember it).\n"
-                    "  • Click 'Load build file…' to pick the .xml directly.\n"
-                    "  • Or paste the PoB code above and click 'Load build'.\n\n"
-                    "Note: a build only becomes a file once you SAVE it in PoB "
-                    "(Ctrl+S). A build you've only imported/opened won't appear "
-                    "until it's saved — the paste-code route avoids that.")
+                    "\n\nIf your builds are elsewhere, set \"pob_builds_dir\" in "
+                    "data_engine/config.json to that folder. Or just paste a PoB "
+                    "code above and click 'Load build'.")
                 return
             for b in builds:
                 cls = b.get("class_name", "?")
@@ -3681,6 +3563,43 @@ class KalandraOverlayApp(ParentClass):
                 context.insert(0, hist)
         except Exception:
             pass
+        # SCALING SOURCES (from the DB): for a "what scales / affects X?" style
+        # question, look X up, read its REAL poe2db tags, and pull every tagged
+        # asset that shares them — so the Orb answers from the database, listing
+        # actual uniques/gems/mods/passives, not generic guesses.
+        if KalandraTagGraph and KalandraDBHandler:
+            tdb = None
+            try:
+                low = (text or "").lower()
+                wants_scaling = any(k in low for k in (
+                    "scale", "scaling", "affect", "boost", "increase", "buff",
+                    "more damage", "improve", "what works", "good for", "help my",
+                    "support", "uniqu", "mod", "passive", "craft", "gear", "stack"))
+                tdb = KalandraDBHandler()
+                tgr = KalandraTagGraph(tdb)
+                named = tgr.entities_in_text(text)
+                cands = list(named)
+                if wants_scaling and isinstance(self.current_build_full, dict):
+                    for t in (self._build_search_terms() or [])[:3]:
+                        if t not in cands:
+                            cands.append(t)
+                if named or (wants_scaling and cands):
+                    for ent in cands:
+                        blk = tgr.context_block(ent)
+                        if blk:
+                            context.insert(0, blk)
+                            if self.config.get("log_ai_context", True):
+                                self.signals.log.emit(
+                                    "AI-CONTEXT", f"Scaling sources grounded on: {ent}")
+                            break
+            except Exception:
+                pass
+            finally:
+                if tdb is not None:
+                    try:
+                        tdb.close()
+                    except Exception:
+                        pass
         # Verified corrections go FIRST (highest priority): authoritative facts
         # that override the DB and the model's own (often wrong) PoE2 knowledge.
         # Match against the user's message + the loaded build so the right facts
@@ -4037,8 +3956,20 @@ class KalandraOverlayApp(ParentClass):
                     pass
                 concurrency = int(self.config.get("crawl_concurrency", 10))
                 max_pages = int(self.config.get("crawl_max_pages", 80000))
-                result = scraper.crawl(max_pages=max_pages, concurrency=concurrency,
-                                       stop_flag=self._sync_stop)
+                # Drain mode (default on): after the main pass, keep re-queuing
+                # pages that were skipped due to timeouts/rate-limits and crawl
+                # again until nothing retryable remains — bounded by a round cap
+                # and a stall guard so it always terminates. Set config
+                # "crawl_drain" to false for a single old-style pass.
+                if bool(self.config.get("crawl_drain", True)) and \
+                        hasattr(scraper, "crawl_until_drained"):
+                    result = scraper.crawl_until_drained(
+                        max_pages=max_pages, concurrency=concurrency,
+                        stop_flag=self._sync_stop)
+                else:
+                    result = scraper.crawl(max_pages=max_pages,
+                                           concurrency=concurrency,
+                                           stop_flag=self._sync_stop)
                 total_new = result["stored"]
                 total_updated = result.get("updated", 0)
             else:
@@ -4894,4 +4825,4 @@ if __name__ == "__main__":
             sys.exit(exit_code)
         except Exception:
             print("\n=========================================================")
-           
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              
