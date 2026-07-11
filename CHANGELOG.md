@@ -9,6 +9,15 @@ Repo: https://github.com/castleism/Kalandra_Git
 
 ## [Unreleased]
 
+### Changed — 2026-07-11 installer CI now also builds a single self-extracting .exe
+- The Build Installer Package workflow wraps `Kalandra-Setup.zip` into a
+  one-file `Kalandra-Installer.exe` (7-Zip GUI self-extractor): run it, pick
+  a folder, it unpacks the package there (persistent, not temp — so the app
+  installs correctly), then run `Kalandra\Setup.bat`. Both the .exe and the
+  .zip are attached to the `installer-latest` release. Self-extractor step is
+  fail-soft, so the zip always ships even if 7-Zip is unavailable on the
+  runner.
+
 ### Added — 2026-07-11 CI installer build + Start-menu registration
 - **GitHub Action `Build Installer Package`** — a Windows runner compiles
   `Kalandra-Setup.exe` (PyInstaller) and `make_release_zip.py` assembles the

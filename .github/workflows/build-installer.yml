@@ -1,10 +1,14 @@
 name: Build Installer Package
 
 # Builds the Kalandra installer/repair/uninstaller package on a real Windows
-# runner: PyInstaller compiles the setup-wizard exe, then make_release_zip.py
-# assembles the full, secret-scrubbed Kalandra-Setup.zip (app + wizard exe).
-# The result is uploaded as a build artifact AND published to a rolling
-# "installer-latest" pre-release so there's a permanent public download URL.
+# runner: PyInstaller compiles the setup-wizard exe, make_release_zip.py
+# assembles the full secret-scrubbed Kalandra-Setup.zip (app + wizard exe),
+# and a 7-Zip GUI self-extractor wraps it into a single Kalandra-Installer.exe.
+# Both are uploaded as build artifacts AND published to a rolling
+# "installer-latest" pre-release for permanent public download URLs.
+#
+# Triggers: manual (Actions tab -> Run workflow), or automatically when the
+# installer / launchers / packaging script / version change on main.
 
 on:
   workflow_dispatch:
@@ -68,13 +72,36 @@ jobs:
           python scripts/make_release_zip.py
           $zip = Join-Path $env:KALANDRA_RELEASE_OUT "Kalandra-Setup.zip"
           if (-not (Test-Path $zip)) { throw "release zip not produced at $zip" }
-          "$([math]::Round((Get-Item $zip).Length/1MB,1)) MB" | Write-Host
+          "zip: $([math]::Round((Get-Item $zip).Length/1MB,1)) MB" | Write-Host
 
-      - name: Upload build artifact
+      - name: Wrap into a single self-extracting installer (.exe)
+        shell: pwsh
+        continue-on-error: true      # zip still ships if 7-Zip/SFX is unavailable
+        env:
+          KALANDRA_RELEASE_OUT: ${{ runner.temp }}\kal-dist
+        run: |
+          $seven = "C:\Program Files\7-Zip\7z.exe"
+          $sfx   = "C:\Program Files\7-Zip\7z.sfx"     # GUI archive self-extractor
+          if (-not (Test-Path $seven)) { Write-Host "7-Zip not found; skipping SFX."; exit 0 }
+          if (-not (Test-Path $sfx))   { Write-Host "7z.sfx module not found; skipping SFX."; exit 0 }
+          $zip   = Join-Path $env:KALANDRA_RELEASE_OUT "Kalandra-Setup.zip"
+          $stage = Join-Path $env:RUNNER_TEMP "sfxstage"
+          if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
+          Expand-Archive -Path $zip -DestinationPath $stage -Force
+          $exe = Join-Path $env:KALANDRA_RELEASE_OUT "Kalandra-Installer.exe"
+          if (Test-Path $exe) { Remove-Item $exe -Force }
+          # GUI self-extractor: prompts for a destination and unpacks the
+          # Kalandra\ folder there (persistent — NOT temp), so Setup.bat can be
+          # run from the chosen location afterwards.
+          & $seven a "-sfx$sfx" "$exe" (Join-Path $stage "Kalandra")
+          if (-not (Test-Path $exe)) { throw "SFX exe not produced" }
+          "exe: $([math]::Round((Get-Item $exe).Length/1MB,1)) MB" | Write-Host
+
+      - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: Kalandra-Setup-${{ steps.ver.outputs.version }}
-          path: ${{ runner.temp }}\kal-dist\Kalandra-Setup.zip
+          name: Kalandra-Installer-${{ steps.ver.outputs.version }}
+          path: ${{ runner.temp }}\kal-dist\*
           if-no-files-found: error
 
       - name: Publish rolling installer release
@@ -85,17 +112,25 @@ jobs:
           tag_name: installer-latest
           name: Kalandra Installer (latest build)
           prerelease: true
-          files: ${{ runner.temp }}\kal-dist\Kalandra-Setup.zip
+          fail_on_unmatched_files: false
+          files: |
+            ${{ runner.temp }}\kal-dist\Kalandra-Setup.zip
+            ${{ runner.temp }}\kal-dist\Kalandra-Installer.exe
           body: |
             Automated build of the Kalandra installer / repair / uninstaller package.
 
             **Version:** ${{ steps.ver.outputs.version }}
             **Commit:** ${{ github.sha }}
 
-            **How to use:** download `Kalandra-Setup.zip`, unzip it anywhere, then
-            run `Kalandra\Setup.bat` (or `Kalandra\Kalandra-Setup\Kalandra-Setup.exe`).
-            The wizard installs, repairs, or uninstalls, and now registers Kalandra
-            as a searchable Start-menu program.
+            **Two ways to install (pick one):**
 
-            This is an unsigned pre-release build; Windows SmartScreen may warn on
-            first run ("More info" -> "Run anyway").
+            - **`Kalandra-Installer.exe`** (one file) — run it, choose a folder to
+              unpack into, then run `Kalandra\Setup.bat` in that folder.
+            - **`Kalandra-Setup.zip`** — unzip anywhere, then run `Kalandra\Setup.bat`
+              (or `Kalandra\Kalandra-Setup\Kalandra-Setup.exe`).
+
+            The wizard installs, repairs, or uninstalls, and registers Kalandra as a
+            searchable Start-menu program.
+
+            Unsigned pre-release; Windows SmartScreen may warn on first run
+            ("More info" -> "Run anyway").
