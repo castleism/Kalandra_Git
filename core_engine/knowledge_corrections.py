@@ -28,20 +28,29 @@ import time
 _DEFAULT_NAME = "knowledge_corrections.json"
 
 # Shipped defaults: known facts the model gets wrong. Seeded on first run only.
+#
+# NOTE on "tags" here: these are MATCH TERMS — the real names/aliases of the
+# thing the fact is about, used to decide WHEN to inject the correction. They are
+# NOT game tags, and must never be a taxonomy of our own invention. A PoE entity's
+# actual tags (Physical, Damage Over Time, Bleeding, ...) come from poe2db and are
+# stored on the knowledge-base entry itself; a correction just states the true tag
+# relationship in its text. So match on the subject's real names ("Corrupted
+# Blood", "Corrupting Cry"), not on damage-type keywords like "physical"/"bleed"
+# (which mislabel the entry and make the correction fire on unrelated builds).
 _SEED = [
     {
         "topic": "Corrupted Blood",
         "correction": (
             "Corrupted Blood (applied by the Corrupting Cry support) is a STACKING "
-            "PHYSICAL damage-over-time debuff. It is NOT a Bleed and is NOT affected "
-            "by Bleed-specific modifiers (e.g. 'increased Bleeding damage', faster "
-            "bleeding, bleed on hit). It scales with modifiers to Physical damage, to "
-            "Damage Over Time, to generic/area damage where applicable, with warcry "
-            "effectiveness/exerted attacks that apply more stacks, and with the number "
-            "of stacks applied. Never recommend Bleed-specific scaling for Corrupted "
-            "Blood."),
-        "tags": ["corrupted blood", "corrupting cry", "bleed", "physical", "dot",
-                 "warcry", "fortifying cry"],
+            "PHYSICAL damage-over-time debuff. Its real tags are Physical and Damage "
+            "Over Time; it does NOT have the Bleeding tag. It is therefore NOT a Bleed "
+            "and is NOT affected by Bleed-specific modifiers (e.g. 'increased Bleeding "
+            "damage', faster bleeding, bleed on hit). It scales with modifiers to "
+            "Physical damage, to Damage Over Time, to generic/area damage where "
+            "applicable, with warcry effectiveness/exerted attacks that apply more "
+            "stacks, and with the number of stacks applied. Never recommend "
+            "Bleed-specific scaling for Corrupted Blood."),
+        "tags": ["corrupted blood", "corrupting cry"],
     },
 ]
 

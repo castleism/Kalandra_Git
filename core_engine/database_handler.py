@@ -57,6 +57,10 @@ class KalandraDBHandler:
         Every entry tracks when it was scraped, its source link, and live patch tags.
         """
         # Table 1: Scoured Game Data with Time Stamps & Citations
+        # `tags` holds poe2db's OWN game tags for the page (e.g. a skill's
+        # "Attack, AoE, Projectile, Lightning" line). PoE tags decide which
+        # modifiers apply, so we store the source's real tags — never a
+        # keyword set of our own invention.
         self.cursor.execute("""
             CREATE TABLE IF NOT EXISTS knowledge_ledger (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -64,9 +68,19 @@ class KalandraDBHandler:
                 content_payload TEXT NOT NULL,
                 source_url TEXT NOT NULL,
                 scraped_at TEXT NOT NULL,
-                game_version_tag TEXT DEFAULT 'Patch 0.5.4'
+                game_version_tag TEXT DEFAULT 'Patch 0.5.4',
+                tags TEXT DEFAULT ''
             )
         """)
+        # Migrate pre-existing databases that predate the `tags` column.
+        try:
+            cols = [r[1] for r in self.cursor.execute(
+                "PRAGMA table_info(knowledge_ledger)").fetchall()]
+            if "tags" not in cols:
+                self.cursor.execute(
+                    "ALTER TABLE knowledge_ledger ADD COLUMN tags TEXT DEFAULT ''")
+        except Exception:
+            pass
         
         # Table 2: Stream Clips & Player Ideas Ledger (The Idea Vault)
         self.cursor.execute("""
@@ -78,29 +92,120 @@ class KalandraDBHandler:
             )
         """)
         self.conn.commit()
+        # Full-text search index over the knowledge ledger. This is what makes
+        # AI grounding fast AND relevant: instead of a LIKE '%term%' scan (which
+        # reads every row and returns whatever matches first, unranked), FTS5
+        # keeps an inverted index and ranks hits by bm25 relevance. Built into
+        # SQLite, so no new dependency; degrades gracefully if this SQLite build
+        # lacks FTS5 (self.fts_enabled stays False and callers fall back to LIKE).
+        self._init_fts()
 
-    def insert_scoured_data(self, topic, content, url, version="Patch 0.5.4"):
+    # ---- Full-text (FTS5) search index --------------------------------------
+    def _init_fts(self):
+        """Create the FTS5 mirror of knowledge_ledger + keep-in-sync triggers,
+        and backfill existing rows once. Sets self.fts_enabled."""
+        self.fts_enabled = False
+        # Bump when the FTS schema changes so old indexes are rebuilt, not reused.
+        FTS_SCHEMA_VERSION = 2
+        try:
+            ver = self.cursor.execute("PRAGMA user_version").fetchone()[0]
+            # If an older-shape index exists (e.g. the first 2-column version),
+            # drop it so we can recreate it with the tags column included.
+            if ver < FTS_SCHEMA_VERSION:
+                self.cursor.execute("DROP TABLE IF EXISTS knowledge_fts")
+                for trg in ("knowledge_ledger_ai", "knowledge_ledger_ad",
+                            "knowledge_ledger_au"):
+                    self.cursor.execute("DROP TRIGGER IF EXISTS %s" % trg)
+                self.conn.commit()
+            # external-content FTS5: the index stores only the terms; the text
+            # still lives once in knowledge_ledger (no data duplication). We index
+            # topic_tag, the page's real poe2db `tags`, and content_payload, so a
+            # search can be matched and bm25-ranked on the game's own tags.
+            self.cursor.execute("""
+                CREATE VIRTUAL TABLE IF NOT EXISTS knowledge_fts USING fts5(
+                    topic_tag,
+                    tags,
+                    content_payload,
+                    content='knowledge_ledger',
+                    content_rowid='id',
+                    tokenize='porter unicode61'
+                )
+            """)
+            # Triggers keep the index current as the crawler inserts/updates/deletes.
+            self.cursor.executescript("""
+                CREATE TRIGGER IF NOT EXISTS knowledge_ledger_ai
+                AFTER INSERT ON knowledge_ledger BEGIN
+                    INSERT INTO knowledge_fts(rowid, topic_tag, tags, content_payload)
+                    VALUES (new.id, new.topic_tag, new.tags, new.content_payload);
+                END;
+                CREATE TRIGGER IF NOT EXISTS knowledge_ledger_ad
+                AFTER DELETE ON knowledge_ledger BEGIN
+                    INSERT INTO knowledge_fts(knowledge_fts, rowid, topic_tag, tags, content_payload)
+                    VALUES ('delete', old.id, old.topic_tag, old.tags, old.content_payload);
+                END;
+                CREATE TRIGGER IF NOT EXISTS knowledge_ledger_au
+                AFTER UPDATE ON knowledge_ledger BEGIN
+                    INSERT INTO knowledge_fts(knowledge_fts, rowid, topic_tag, tags, content_payload)
+                    VALUES ('delete', old.id, old.topic_tag, old.tags, old.content_payload);
+                    INSERT INTO knowledge_fts(rowid, topic_tag, tags, content_payload)
+                    VALUES (new.id, new.topic_tag, new.tags, new.content_payload);
+                END;
+            """)
+            self.conn.commit()
+            # Backfill the index from existing rows once per schema version
+            # (covers both first-ever build and the 2->3 column upgrade).
+            if ver < FTS_SCHEMA_VERSION:
+                self.cursor.execute(
+                    "INSERT INTO knowledge_fts(knowledge_fts) VALUES('rebuild')")
+                self.cursor.execute("PRAGMA user_version = %d" % FTS_SCHEMA_VERSION)
+                self.conn.commit()
+            self.fts_enabled = True
+        except Exception:
+            # FTS5 not compiled in, or index build failed — callers fall back to
+            # the LIKE scan so search still works, just slower/unranked.
+            try:
+                self.conn.rollback()
+            except Exception:
+                pass
+            self.fts_enabled = False
+
+    def rebuild_fts(self):
+        """Force a full reindex (e.g. after a bulk import). No-op if FTS is off."""
+        if not getattr(self, "fts_enabled", False):
+            return False
+        try:
+            self.cursor.execute(
+                "INSERT INTO knowledge_fts(knowledge_fts) VALUES('rebuild')")
+            self.conn.commit()
+            return True
+        except Exception:
+            return False
+
+    def insert_scoured_data(self, topic, content, url, version="Patch 0.5.4",
+                            tags=""):
         """
         Inserts newly parsed game data with an absolute, trackable timestamp.
+        `tags` is poe2db's own tag line for the page (may be "").
         """
         current_time = datetime.now().isoformat()
         self.cursor.execute("""
-            INSERT INTO knowledge_ledger (topic_tag, content_payload, source_url, scraped_at, game_version_tag)
-            VALUES (?, ?, ?, ?, ?)
-        """, (topic, content, url, current_time, version))
+            INSERT INTO knowledge_ledger (topic_tag, content_payload, source_url, scraped_at, game_version_tag, tags)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (topic, content, url, current_time, version, tags or ""))
         self.conn.commit()
         return self.cursor.lastrowid
 
-    def update_scoured_data(self, topic, content, url, version="Patch 0.5.4"):
+    def update_scoured_data(self, topic, content, url, version="Patch 0.5.4",
+                            tags=""):
         """Refresh an existing ledger entry in place (same source_url). Used by
         the crawler's re-check passes: page content changes after patches, and
         without this a re-fetch was silently discarded."""
         current_time = datetime.now().isoformat()
         self.cursor.execute("""
             UPDATE knowledge_ledger
-               SET topic_tag=?, content_payload=?, scraped_at=?, game_version_tag=?
+               SET topic_tag=?, content_payload=?, scraped_at=?, game_version_tag=?, tags=?
              WHERE source_url=?
-        """, (topic, content, current_time, version, url))
+        """, (topic, content, current_time, version, tags or "", url))
         self.conn.commit()
         return self.cursor.rowcount
 
@@ -128,71 +233,6 @@ class KalandraDBHandler:
     def close(self):
         """Safely terminates the database connection."""
         self.conn.close()
-
-
-def db_status(db_path=None):
-    """Everything the DB status window shows, in one read-only pass.
-
-    Returns a dict that is ALWAYS complete (zeros/None on any problem):
-      path, exists, size_bytes, pages, last_scraped (ISO or None),
-      versions {game_version_tag: pages}, sources {domain: pages},
-      pending {queued, error, done}  (crawl_state, if present).
-    Opens its own read-only connection — safe to call from the UI thread
-    while a sync worker is writing (WAL)."""
-    import sqlite3 as _sq
-    if db_path is None:
-        db_path = os.path.join(KalandraDBHandler._configured_db_dir(),
-                               "localized_knowledge.db")
-    out = {"path": db_path, "exists": os.path.exists(db_path),
-           "size_bytes": 0, "pages": 0, "last_scraped": None,
-           "versions": {}, "sources": {},
-           "pending": {"queued": 0, "error": 0, "done": 0}}
-    if not out["exists"]:
-        return out
-    try:
-        out["size_bytes"] = os.path.getsize(db_path)
-    except Exception:
-        pass
-    con = None
-    try:
-        con = _sq.connect(f"file:{db_path}?mode=ro", uri=True, timeout=5)
-        cur = con.cursor()
-        try:
-            out["pages"] = cur.execute(
-                "SELECT COUNT(*) FROM knowledge_ledger").fetchone()[0]
-            out["last_scraped"] = cur.execute(
-                "SELECT MAX(scraped_at) FROM knowledge_ledger").fetchone()[0]
-            for tag, n in cur.execute(
-                    "SELECT game_version_tag, COUNT(*) FROM knowledge_ledger "
-                    "GROUP BY game_version_tag ORDER BY COUNT(*) DESC"):
-                out["versions"][str(tag)] = n
-            # domain histogram: substr math beats pulling every URL over
-            for url, n in cur.execute(
-                    "SELECT source_url, COUNT(*) FROM knowledge_ledger "
-                    "GROUP BY source_url").fetchall()[:100000]:
-                dom = str(url or "").split("//")[-1].split("/")[0] or "?"
-                out["sources"][dom] = out["sources"].get(dom, 0) + n
-        except Exception:
-            pass
-        try:
-            for status, n in cur.execute(
-                    "SELECT status, COUNT(*) FROM crawl_state "
-                    "GROUP BY status"):
-                key = str(status) if str(status) in out["pending"] else None
-                if key:
-                    out["pending"][key] = n
-        except Exception:
-            pass
-    except Exception:
-        pass
-    finally:
-        try:
-            if con is not None:
-                con.close()
-        except Exception:
-            pass
-    return out
-
 
 # Interactive Self-Test Block
 if __name__ == "__main__":

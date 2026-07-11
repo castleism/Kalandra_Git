@@ -208,7 +208,41 @@ class KalandraScraper:
             full = urldefrag(urljoin(url, a["href"]))[0].split("?")[0]
             if self._is_followable(full):
                 links.append(full)
-        return title, text, version, links
+
+        tags = self._extract_tags(soup)
+        return title, text, version, links, tags
+
+    @staticmethod
+    def _extract_tags(soup):
+        """Read poe2db's OWN game tags for a skill/support gem straight from the
+        source markup. On poe2db each tag is an ``<a class="GemTags ...">`` chip
+        (Attack, AoE, Projectile, Lightning, Chaining, ...). PoE tags decide
+        which modifiers apply (a skill tagged Physical + Damage-over-time but NOT
+        Bleeding is not scaled by Bleed mods), so we take the page's real tags
+        rather than inventing keywords.
+
+        Verified against the live site: the tags are element text, NOT the
+        angle-bracket "<Attack>" form some renderers show, and poe2db prints the
+        chip row twice — so we de-duplicate. Non-gem pages (items, passives,
+        monsters) carry no GemTags chips, so this returns "" and we never
+        fabricate a tag."""
+        try:
+            chips = soup.find_all("a", class_="GemTags")
+        except Exception:
+            return ""
+        return KalandraScraper._dedup_tags(
+            c.get_text(strip=True) for c in chips)
+
+    @staticmethod
+    def _dedup_tags(items):
+        seen, out = set(), []
+        for t in items:
+            t = (t or "").strip()
+            k = t.lower()
+            if t and k not in seen:
+                seen.add(k)
+                out.append(t)
+        return ", ".join(out[:40])
 
     def _fetch_and_parse(self, url):
         """Worker task (runs in a thread pool): fetch + parse one page.
@@ -221,9 +255,9 @@ class KalandraScraper:
             if (resp.status_code != 200
                     or "text/html" not in resp.headers.get("Content-Type", "")):
                 return {"url": url, "ok": False}
-            title, text, version, links = self._parse(resp.text, url)
+            title, text, version, links, tags = self._parse(resp.text, url)
             return {"url": url, "ok": True, "title": title, "text": text,
-                    "version": version, "links": links}
+                    "version": version, "links": links, "tags": tags}
         except Exception as e:
             return {"url": url, "ok": False, "error": str(e)}
 
@@ -314,7 +348,8 @@ class KalandraScraper:
                         try:
                             self.db.insert_scoured_data(
                                 topic=result["title"], content=result["text"],
-                                url=url, version=result["version"])
+                                url=url, version=result["version"],
+                                tags=result.get("tags", ""))
                             stored += 1
                         except Exception as e:
                             # One bad row must not abort the whole crawl; leave
@@ -327,7 +362,8 @@ class KalandraScraper:
                         try:
                             if self.db.update_scoured_data(
                                     topic=result["title"], content=result["text"],
-                                    url=url, version=result["version"]):
+                                    url=url, version=result["version"],
+                                    tags=result.get("tags", "")):
                                 updated += 1
                         except Exception:
                             pass
@@ -453,21 +489,70 @@ class KalandraScraper:
     def search(self, term, limit=6):
         """Keyword retrieval for grounding AI answers (RAG context). Returns a
         snippet centered on the match, with site boilerplate stripped, so the AI
-        sees the relevant content rather than every page's identical menu."""
-        like = f"%{term}%"
-        self.db.cursor.execute(
-            "SELECT topic_tag, content_payload, source_url FROM knowledge_ledger "
-            "WHERE content_payload LIKE ? OR topic_tag LIKE ? LIMIT ?",
-            (like, like, limit),
-        )
-        rows = self.db.cursor.fetchall()
+        sees the relevant content rather than every page's identical menu.
+
+        Uses the FTS5 index (bm25-ranked, so the MOST relevant page for the term
+        comes first) when available, and falls back to a LIKE scan otherwise."""
+        term = (term or "").strip()
+        if not term:
+            return []
+        rows = self._search_rows(term, limit)
         out = []
-        for (t, c, u) in rows:
+        for row in rows:
+            t, c, u = row[0], row[1], row[2]
+            tags = row[3] if len(row) > 3 else ""
             snip = self._snippet_around(c, term)
             if not snip:
                 continue
-            out.append(f"{t} ({u}): {snip}")
+            # Surface poe2db's real tags inline so the AI grounds on the game's
+            # actual tag set (e.g. sees that Corrupted Blood is Physical/DoT and
+            # carries NO Bleed tag) instead of guessing tag relationships.
+            tagpart = f" [tags: {tags}]" if tags else ""
+            out.append(f"{t}{tagpart} ({u}): {snip}")
         return out
+
+    @staticmethod
+    def _fts_query(term):
+        """Turn a raw term into a safe FTS5 MATCH query. We quote each word as a
+        phrase token so punctuation/operators in the term can never be
+        interpreted as FTS syntax (and can't inject). Multi-word terms like
+        'Lightning Arrow' become a ranked AND of the two words."""
+        import re as _re
+        words = _re.findall(r"[A-Za-z0-9]+", term)
+        if not words:
+            return None
+        return " AND ".join('"%s"' % w for w in words)
+
+    def _search_rows(self, term, limit):
+        """(topic_tag, content_payload, source_url) rows for `term`, ranked by
+        relevance via FTS5 when the index is present; LIKE scan as a fallback."""
+        if getattr(self.db, "fts_enabled", False):
+            q = self._fts_query(term)
+            if q:
+                try:
+                    # bm25 column weights (topic_tag, tags, content_payload): a
+                    # hit on the page's title or its real tag set outranks a hit
+                    # buried in body text, so the right page surfaces first.
+                    self.db.cursor.execute(
+                        "SELECT l.topic_tag, l.content_payload, l.source_url, l.tags "
+                        "FROM knowledge_fts f "
+                        "JOIN knowledge_ledger l ON l.id = f.rowid "
+                        "WHERE knowledge_fts MATCH ? "
+                        "ORDER BY bm25(knowledge_fts, 5.0, 4.0, 1.0) LIMIT ?",
+                        (q, limit),
+                    )
+                    rows = self.db.cursor.fetchall()
+                    if rows:
+                        return rows
+                except Exception:
+                    pass  # fall through to LIKE
+        like = f"%{term}%"
+        self.db.cursor.execute(
+            "SELECT topic_tag, content_payload, source_url, tags FROM knowledge_ledger "
+            "WHERE content_payload LIKE ? OR topic_tag LIKE ? OR tags LIKE ? LIMIT ?",
+            (like, like, like, limit),
+        )
+        return self.db.cursor.fetchall()
 
 
 if __name__ == "__main__":
