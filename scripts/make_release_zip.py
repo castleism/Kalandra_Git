@@ -131,8 +131,13 @@ def scan(out_path):
 
 
 def main():
-    desktop = os.path.join(os.path.expanduser("~"), "Desktop")
-    outdir = desktop if os.path.isdir(desktop) else os.path.expanduser("~")
+    env_out = os.environ.get("KALANDRA_RELEASE_OUT")
+    if env_out:
+        outdir = env_out
+        os.makedirs(outdir, exist_ok=True)
+    else:
+        desktop = os.path.join(os.path.expanduser("~"), "Desktop")
+        outdir = desktop if os.path.isdir(desktop) else os.path.expanduser("~")
     out = os.path.join(outdir, "Kalandra-Setup.zip")
     # Leftover zips INSIDE the project poison future builds — refuse them.
     strays = [f for f in os.listdir(_ROOT) if f.lower().endswith(".zip")]

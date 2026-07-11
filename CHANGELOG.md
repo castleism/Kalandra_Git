@@ -9,6 +9,22 @@ Repo: https://github.com/castleism/Kalandra_Git
 
 ## [Unreleased]
 
+### Added — 2026-07-11 CI installer build + Start-menu registration
+- **GitHub Action `Build Installer Package`** — a Windows runner compiles
+  `Kalandra-Setup.exe` (PyInstaller) and `make_release_zip.py` assembles the
+  full secret-scrubbed `Kalandra-Setup.zip`, published to a rolling
+  `installer-latest` pre-release for a permanent public download link (and
+  uploaded as a build artifact). Triggers on installer/launcher/version
+  changes or manual dispatch; routine commits don't rebuild.
+  `make_release_zip.py` gained a `KALANDRA_RELEASE_OUT` override for a clean
+  CI output path.
+- **Kalandra now registers as a searchable installed program.** The old
+  `Make-Shortcut.ps1` created a desktop shortcut only — invisible to Start
+  search. It now also creates a Start-menu shortcut and an Apps & Features
+  (Add/Remove Programs) entry, per-user (no admin). The setup wizard runs it
+  after install, so a normal install makes Kalandra findable from the Start
+  button. New launcher `Install Start Menu + Desktop Icon.bat`.
+
 ### Changed — 2026-07-11 reframe: product first
 - The north-star docs are reframed around one question — would players
   miss Kalandra? — with the long-game speculation removed from public

@@ -153,7 +153,8 @@ class Wizard(tk.Tk):
             self.head("No existing installation found")
             self.para("This looks like a fresh machine. The installer will "
                       "set up Python, all dependencies, the add-ons you "
-                      "choose, and a desktop shortcut.")
+                      "choose, and register Kalandra as a searchable "
+                      "installed program (Start menu, desktop, and Apps).")
             self.button("Install Kalandra", self.page_install, accent=True)
             self.button("Exit", self.destroy)
 
@@ -184,9 +185,20 @@ class Wizard(tk.Tk):
         self.update()
         if os.path.exists(ps1):
             run_ps1(ps1, self.root_dir)
+            # Register Kalandra as a real installed program: Start Menu entry
+            # (so it's findable from the Start/home search), Apps & Features
+            # listing, and the desktop shortcut.
+            shortcut_ps1 = os.path.join(self.root_dir, "installer",
+                                        "Make-Shortcut.ps1")
+            if os.path.exists(shortcut_ps1):
+                try:
+                    run_ps1(shortcut_ps1, self.root_dir)
+                except Exception:
+                    pass
             self.head("Setup finished")
-            self.para("If everything installed cleanly, the Kalandra "
-                      "shortcut is on your desktop. Fly free, exile.")
+            self.para("Kalandra is installed. Press the Start/home button and "
+                      "type \"Kalandra\" to launch it — it's also on your "
+                      "desktop and in Settings > Apps. Fly free, exile.")
             self.button("Close", self.destroy, accent=True)
         else:
             self.para("installer\\Kalandra-Setup.ps1 is missing — this copy "

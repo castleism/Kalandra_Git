@@ -1,0 +1,101 @@
+name: Build Installer Package
+
+# Builds the Kalandra installer/repair/uninstaller package on a real Windows
+# runner: PyInstaller compiles the setup-wizard exe, then make_release_zip.py
+# assembles the full, secret-scrubbed Kalandra-Setup.zip (app + wizard exe).
+# The result is uploaded as a build artifact AND published to a rolling
+# "installer-latest" pre-release so there's a permanent public download URL.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+    paths:
+      - 'installer/**'
+      - 'launchers/**'
+      - 'scripts/make_release_zip.py'
+      - 'version.py'
+      - '.github/workflows/build-installer.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-installer
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install PyInstaller
+        run: python -m pip install --upgrade pip pyinstaller
+
+      - name: Read version
+        id: ver
+        shell: pwsh
+        run: |
+          $m = Select-String -Path version.py -Pattern 'KALANDRA_VERSION\s*=\s*"([^"]+)"'
+          $v = $m.Matches[0].Groups[1].Value
+          "version=$v" >> $env:GITHUB_OUTPUT
+          Write-Host "Kalandra version: $v"
+
+      - name: Build Kalandra-Setup.exe (onedir wizard)
+        shell: pwsh
+        run: |
+          python -m PyInstaller --onedir --windowed --noupx --clean --noconfirm `
+            --name Kalandra-Setup `
+            --icon "$env:GITHUB_WORKSPACE\gui_overlay\assets\kalandra.ico" `
+            --distpath . --workpath build\pyi --specpath build\pyi `
+            installer\setup_wizard.py
+          if (-not (Test-Path "Kalandra-Setup\Kalandra-Setup.exe")) {
+            throw "PyInstaller did not produce Kalandra-Setup\Kalandra-Setup.exe"
+          }
+
+      - name: Assemble release package (Kalandra-Setup.zip)
+        shell: pwsh
+        env:
+          KALANDRA_RELEASE_OUT: ${{ runner.temp }}\kal-dist
+        run: |
+          python scripts/make_release_zip.py
+          $zip = Join-Path $env:KALANDRA_RELEASE_OUT "Kalandra-Setup.zip"
+          if (-not (Test-Path $zip)) { throw "release zip not produced at $zip" }
+          "$([math]::Round((Get-Item $zip).Length/1MB,1)) MB" | Write-Host
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Kalandra-Setup-${{ steps.ver.outputs.version }}
+          path: ${{ runner.temp }}\kal-dist\Kalandra-Setup.zip
+          if-no-files-found: error
+
+      - name: Publish rolling installer release
+        id: release
+        continue-on-error: true
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: installer-latest
+          name: Kalandra Installer (latest build)
+          prerelease: true
+          files: ${{ runner.temp }}\kal-dist\Kalandra-Setup.zip
+          body: |
+            Automated build of the Kalandra installer / repair / uninstaller package.
+
+            **Version:** ${{ steps.ver.outputs.version }}
+            **Commit:** ${{ github.sha }}
+
+            **How to use:** download `Kalandra-Setup.zip`, unzip it anywhere, then
+            run `Kalandra\Setup.bat` (or `Kalandra\Kalandra-Setup\Kalandra-Setup.exe`).
+            The wizard installs, repairs, or uninstalls, and now registers Kalandra
+            as a searchable Start-menu program.
+
+            This is an unsigned pre-release build; Windows SmartScreen may warn on
+            first run ("More info" -> "Run anyway").
