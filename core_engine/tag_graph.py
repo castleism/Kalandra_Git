@@ -32,8 +32,9 @@ import re
 # their own (used only to DOWN-weight, never to exclude).
 _UBIQUITOUS = {"attack", "spell", "physical", "melee", "projectile", "aoe"}
 
-# Rough page-kind inference. Real structured `kind` is a later phase (the crawler
-# will store it); until then we infer from tags + URL so results can be grouped.
+# Rough page-kind inference — LEGACY FALLBACK only. Since 2026-07-12 the crawler
+# classifies each page from poe2db's own markup and stores it in
+# knowledge_ledger.kind; this tags+URL guess covers rows crawled before that.
 _SKILLISH = {"attack", "spell", "aoe", "projectile", "melee", "channelling",
              "duration", "minion", "totem", "trap", "mine", "warcry", "slam",
              "chaining", "nova", "orb", "herald", "aura", "curse", "movement"}
@@ -62,7 +63,8 @@ class KalandraTagGraph:
     (KalandraDBHandler); every method is read-only and thread-safe as long as
     each thread uses its own handler (the app's convention)."""
 
-    KINDS = ("skill_gem", "support_gem", "unique", "mod", "passive", "other")
+    KINDS = ("skill_gem", "support_gem", "unique", "mod", "passive", "item",
+             "other")
 
     def __init__(self, db_handler):
         self.db = db_handler
@@ -133,14 +135,19 @@ class KalandraTagGraph:
 
         rows = self._candidate_rows(want, candidate_cap)
         scored = []
-        for title, url, tags_str in rows:
+        for title, url, tags_str, stored_kind in rows:
             if exclude_norm and _norm(title) == exclude_norm:
                 continue
             row_tags = _split_tags(tags_str)
             shared = [t for t in row_tags if _norm(t) in want_norm]
             if len(shared) < min_overlap:
                 continue
-            kind = self._infer_kind(url, row_tags)
+            # The crawler's markup-verified classification wins; the tag/URL
+            # inference only covers rows crawled before `kind` existed.
+            kind = ((stored_kind or "").strip()
+                    or self._infer_kind(url, row_tags))
+            if kind not in self.KINDS:
+                kind = "other"
             if kinds and kind not in kinds:
                 continue
             # Weighted score: sum of each shared tag's idf (rarer -> higher),
@@ -178,7 +185,7 @@ class KalandraTagGraph:
 
     _KIND_LABELS = {"skill_gem": "Skill gems", "support_gem": "Support gems",
                     "unique": "Uniques", "mod": "Item mods", "passive": "Passives",
-                    "other": "Other"}
+                    "item": "Base items", "other": "Other"}
 
     def context_block(self, entity, limit=40):
         """Prompt-ready grounding block for the Orb, or '' if we have nothing.
@@ -208,8 +215,9 @@ class KalandraTagGraph:
 
     # -- internals ------------------------------------------------------------
     def _candidate_rows(self, want, cap):
-        """Rows that plausibly share a tag, cheaply. Uses the FTS tags column
-        when available (fast), else a bounded scan of tagged rows."""
+        """(title, url, tags, kind) rows that plausibly share a tag, cheaply.
+        Uses the FTS tags column when available (fast), else a bounded scan of
+        tagged rows."""
         cur = self.db.cursor
         if getattr(self.db, "fts_enabled", False):
             try:
@@ -217,7 +225,7 @@ class KalandraTagGraph:
                 phrases = " OR ".join('"%s"' % re.sub(r'"', "", t) for t in want)
                 q = "tags : (%s)" % phrases
                 cur.execute(
-                    "SELECT l.topic_tag, l.source_url, l.tags "
+                    "SELECT l.topic_tag, l.source_url, l.tags, l.kind "
                     "FROM knowledge_fts f JOIN knowledge_ledger l ON l.id=f.rowid "
                     "WHERE knowledge_fts MATCH ? LIMIT ?", (q, cap))
                 rows = cur.fetchall()
@@ -227,7 +235,7 @@ class KalandraTagGraph:
                 pass
         # Fallback: scan rows that have any tags (bounded).
         cur.execute(
-            "SELECT topic_tag, source_url, tags FROM knowledge_ledger "
+            "SELECT topic_tag, source_url, tags, kind FROM knowledge_ledger "
             "WHERE tags IS NOT NULL AND tags!='' LIMIT ?", (cap,))
         return cur.fetchall()
 
@@ -259,15 +267,4 @@ class KalandraTagGraph:
         return idf
 
     @staticmethod
-    def _infer_kind(url, row_tags):
-        """Best-effort page-kind until the crawler stores a real `kind`.
-        Conservative: only classify what we're confident about."""
-        norm = {_norm(t) for t in row_tags}
-        if "support" in norm:
-            return "support_gem"
-        u = (url or "").lower()
-        if "support" in u:
-            return "support_gem"
-        if norm & _SKILLISH:
-            return "skill_gem"
-        return "other"
+    def _infer_kind(

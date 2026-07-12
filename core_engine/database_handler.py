@@ -61,6 +61,10 @@ class KalandraDBHandler:
         # "Attack, AoE, Projectile, Lightning" line). PoE tags decide which
         # modifiers apply, so we store the source's real tags — never a
         # keyword set of our own invention.
+        # `kind` is the page kind the scraper classified from poe2db's own
+        # markup ('skill_gem', 'support_gem', 'unique', 'mod', 'passive',
+        # 'item', or '' when unknown) so the tag graph can group reverse-lookup
+        # results without guessing.
         self.cursor.execute("""
             CREATE TABLE IF NOT EXISTS knowledge_ledger (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -69,16 +73,20 @@ class KalandraDBHandler:
                 source_url TEXT NOT NULL,
                 scraped_at TEXT NOT NULL,
                 game_version_tag TEXT DEFAULT 'Patch 0.5.4',
-                tags TEXT DEFAULT ''
+                tags TEXT DEFAULT '',
+                kind TEXT DEFAULT ''
             )
         """)
-        # Migrate pre-existing databases that predate the `tags` column.
+        # Migrate pre-existing databases that predate the `tags`/`kind` columns.
         try:
             cols = [r[1] for r in self.cursor.execute(
                 "PRAGMA table_info(knowledge_ledger)").fetchall()]
             if "tags" not in cols:
                 self.cursor.execute(
                     "ALTER TABLE knowledge_ledger ADD COLUMN tags TEXT DEFAULT ''")
+            if "kind" not in cols:
+                self.cursor.execute(
+                    "ALTER TABLE knowledge_ledger ADD COLUMN kind TEXT DEFAULT ''")
         except Exception:
             pass
         
@@ -171,17 +179,4 @@ class KalandraDBHandler:
 
     def rebuild_fts(self):
         """Force a full reindex (e.g. after a bulk import). No-op if FTS is off."""
-        if not getattr(self, "fts_enabled", False):
-            return False
-        try:
-            self.cursor.execute(
-                "INSERT INTO knowledge_fts(knowledge_fts) VALUES('rebuild')")
-            self.conn.commit()
-            return True
-        except Exception:
-            return False
-
-    def insert_scoured_data(self, topic, content, url, version="Patch 0.5.4",
-                            tags=""):
-        """
-        Inserts newly parsed game data with an absolute, tr
+        if not getattr(self,

@@ -209,29 +209,125 @@ class KalandraScraper:
             if self._is_followable(full):
                 links.append(full)
 
-        tags = self._extract_tags(soup)
-        return title, text, version, links, tags
+        kind = self._page_kind(soup)
+        tags = self._extract_tags(soup, kind)
+        if kind == "gem":
+            # Split gem pages into the two kinds the tag graph groups by.
+            low = {t.strip().lower() for t in tags.split(",")}
+            kind = "support_gem" if "support" in low else "skill_gem"
+        return title, text, version, links, tags, kind
+
+    # -- page-kind classification + per-kind tag extraction --------------------
+    # poe2db renders every page's subject as its FIRST ``newItemPopup`` box, and
+    # the popup's extra class names the page kind. Verified against the live
+    # site 2026-07-12 (Astramentis, Heartstopper, Avatar_of_Fire,
+    # Crystalline_Resistance, Stellar_Amulet, Amulets, Lightning_Arrow):
+    #   UniquePopup             -> unique item page
+    #   keystonePopup /
+    #   notablePopup            -> passive-tree node page
+    #   GemPopup                -> skill/support gem page
+    #   NormalPopup/normalPopup/
+    #   MagicPopup/RarePopup    -> base-item page (class CASE VARIES live!)
+    # Item-class pages (e.g. /us/Amulets) ALSO open with a normal popup but
+    # additionally carry the ModifiersCalc tables (``.mod-title`` rows whose tag
+    # chips are ``span.badge[data-tag]``), so the mod check runs BEFORE the
+    # base-item fallback.
+    _POPUP_KINDS = (
+        ("uniquepopup", "unique"),
+        ("keystonepopup", "passive"),
+        ("notablepopup", "passive"),
+        ("gempopup", "gem"),
+    )
+    _ITEM_POPUPS = ("normalpopup", "magicpopup", "rarepopup")
 
     @staticmethod
-    def _extract_tags(soup):
-        """Read poe2db's OWN game tags for a skill/support gem straight from the
-        source markup. On poe2db each tag is an ``<a class="GemTags ...">`` chip
-        (Attack, AoE, Projectile, Lightning, Chaining, ...). PoE tags decide
-        which modifiers apply (a skill tagged Physical + Damage-over-time but NOT
-        Bleeding is not scaled by Bleed mods), so we take the page's real tags
-        rather than inventing keywords.
-
-        Verified against the live site: the tags are element text, NOT the
-        angle-bracket "<Attack>" form some renderers show, and poe2db prints the
-        chip row twice — so we de-duplicate. Non-gem pages (items, passives,
-        monsters) carry no GemTags chips, so this returns "" and we never
-        fabricate a tag."""
+    def _first_popup_classes(soup):
         try:
-            chips = soup.find_all("a", class_="GemTags")
+            el = soup.find(class_="newItemPopup")
+            if el is None:
+                return ""
+            return " ".join(el.get("class") or []).lower()
         except Exception:
             return ""
-        return KalandraScraper._dedup_tags(
-            c.get_text(strip=True) for c in chips)
+
+    @staticmethod
+    def _page_kind(soup):
+        """Classify a poe2db page from its own markup (never from guesswork).
+        Returns 'unique' | 'passive' | 'gem' | 'mod' | 'item' | '' (unknown).
+        'gem' is refined to skill_gem/support_gem by the caller once tags are
+        known. Unknown stays '' — we never fabricate a kind."""
+        try:
+            cls = KalandraScraper._first_popup_classes(soup)
+            for marker, kind in KalandraScraper._POPUP_KINDS:
+                if marker in cls:
+                    return kind
+            # Mod-table pages (before the base-item fallback — see note above).
+            if (soup.find(class_="mod-title") is not None
+                    or len(soup.select("span.badge[data-tag]")) >= 3):
+                return "mod"
+            if any(m in cls for m in KalandraScraper._ITEM_POPUPS):
+                return "item"
+            # Passive pages sometimes render icon-first (icon container present
+            # even when the popup class didn't match).
+            if soup.find(class_="passive-icon-container") is not None:
+                return "passive"
+            if soup.find("a", class_="GemTags") is not None:
+                return "gem"
+        except Exception:
+            pass
+        return ""
+
+    @staticmethod
+    def _extract_tags(soup, kind=None):
+        """Read poe2db's OWN game tags straight from the source markup, per page
+        kind (all selectors verified against the live site — see _page_kind):
+
+          * gem pages  — ``<a class="GemTags">`` chips (Attack, AoE, ...);
+                         unchanged from the original gem-only extractor.
+          * mod tables — ``<span class="badge" data-tag="...">`` chips on the
+                         ModifiersCalc rows (Life, Mana, Fire, ...).
+          * uniques, base items, passives, everything else — ``<a class=
+            "KeywordPopups">`` keyword links. Each carries a canonical
+            ``data-keyword`` (e.g. the text "Converted" links keyword
+            "Conversion"), which we prefer over the inflected anchor text;
+            camel-case ids are split ("DamageOverTime" -> "Damage Over Time")
+            so they share the gem-tag vocabulary. Anchors inside an EMBEDDED
+            gem popup are skipped so a related gem's tags never bleed onto a
+            non-gem page.
+
+        PoE tags decide which modifiers apply (a skill tagged Physical +
+        Damage-over-time but NOT Bleeding is not scaled by Bleed mods), so we
+        only ever take tags the page itself declares — pages with no tag markup
+        return "" and we never fabricate. poe2db prints chip rows twice, so we
+        de-duplicate."""
+        try:
+            if kind is None:
+                kind = KalandraScraper._page_kind(soup)
+            if kind in ("gem", "skill_gem", "support_gem"):
+                chips = soup.find_all("a", class_="GemTags")
+                return KalandraScraper._dedup_tags(
+                    c.get_text(strip=True) for c in chips)
+            if kind == "mod":
+                out = []
+                for b in soup.select("span.badge[data-tag]"):
+                    txt = b.get_text(strip=True)
+                    out.append(txt or (b.get("data-tag") or "").title())
+                return KalandraScraper._dedup_tags(out)
+            # Keyword-link pages: uniques, base items, passives, unknown.
+            out = []
+            for a in soup.find_all("a", class_="KeywordPopups"):
+                pop = a.find_parent(class_="newItemPopup")
+                if pop is not None and "gempopup" in " ".join(
+                        pop.get("class") or []).lower():
+                    continue  # embedded related-gem popup, not this page's tags
+                dk = (a.get("data-keyword") or "").strip()
+                if dk:
+                    out.append(re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", dk))
+                else:
+                    out.append(a.get_text(strip=True))
+            return KalandraScraper._dedup_tags(out)
+        except Exception:
+            return ""
 
     @staticmethod
     def _dedup_tags(items):
@@ -257,9 +353,10 @@ class KalandraScraper:
                 # Carry the status so the recorder can tell a permanent 404/410
                 # (don't retry) from a transient hiccup (retry on the next pass).
                 return {"url": url, "ok": False, "status": resp.status_code}
-            title, text, version, links, tags = self._parse(resp.text, url)
+            title, text, version, links, tags, kind = self._parse(resp.text, url)
             return {"url": url, "ok": True, "title": title, "text": text,
-                    "version": version, "links": links, "tags": tags}
+                    "version": version, "links": links, "tags": tags,
+                    "kind": kind}
         except Exception as e:
             return {"url": url, "ok": False, "error": str(e)}
 
@@ -351,7 +448,8 @@ class KalandraScraper:
                             self.db.insert_scoured_data(
                                 topic=result["title"], content=result["text"],
                                 url=url, version=result["version"],
-                                tags=result.get("tags", ""))
+                                tags=result.get("tags", ""),
+                                kind=result.get("kind", ""))
                             stored += 1
                         except Exception as e:
                             # One bad row must not abort the whole crawl; leave
@@ -365,105 +463,9 @@ class KalandraScraper:
                             if self.db.update_scoured_data(
                                     topic=result["title"], content=result["text"],
                                     url=url, version=result["version"],
-                                    tags=result.get("tags", "")):
+                                    tags=result.get("tags", ""),
+                                    kind=result.get("kind", "")):
                                 updated += 1
                         except Exception:
                             pass
                     for link in result.get("links", []):
-                        if link not in seen:
-                            seen.add(link)
-                            queue.append(link)
-                            self._enqueue(link)
-                    self._mark(url, "done")
-                else:
-                    # Permanent (404/410) -> 'dead', never retried. Everything
-                    # else (timeout, rate-limit, 5xx, connection drop) -> 'skip',
-                    # which the drain loop re-queues for another attempt.
-                    code = result.get("status")
-                    self._mark(url, "dead" if code in (404, 410) else "skip")
-
-        with concurrent.futures.ThreadPoolExecutor(max_workers=concurrency) as pool:
-            in_flight = {}
-            while (queue or in_flight) and processed < max_pages:
-                if stop_flag is not None and stop_flag.is_set():
-                    self._log("DATABASE", "Crawl paused by user (progress saved).")
-                    break
-
-                # Top up the in-flight set.
-                while (queue and len(in_flight) < concurrency
-                       and (processed + len(in_flight)) < max_pages):
-                    url = queue.popleft()
-                    with self._db_lock:
-                        if self._already_done(url):
-                            continue
-                    fut = pool.submit(self._fetch_and_parse, url)
-                    in_flight[fut] = url
-                    if delay:
-                        time.sleep(delay)
-
-                if not in_flight:
-                    break
-
-                done, _ = concurrent.futures.wait(
-                    in_flight, timeout=30,
-                    return_when=concurrent.futures.FIRST_COMPLETED)
-                for fut in done:
-                    in_flight.pop(fut, None)
-                    try:
-                        result = fut.result()
-                    except Exception as e:
-                        result = {"url": "?", "ok": False, "error": str(e)}
-                    _record(result)
-                    processed += 1
-                    if self.progress:
-                        try:
-                            self.progress(processed, max_pages, result.get("url", ""))
-                        except Exception:
-                            pass
-                    if processed % 50 == 0:
-                        elapsed = max(0.001, time.time() - start_ts)
-                        rate = processed / elapsed * 60.0          # pages/min
-                        remaining = len(queue) + len(in_flight)
-                        eta = (remaining / rate) if rate > 0 else 0
-                        self._log("DATABASE",
-                                  f"Done {baseline_done + processed} | "
-                                  f"discovered+queued ~{remaining} | "
-                                  f"{rate:.0f} pages/min | ETA ~{eta:.0f} min")
-
-        elapsed = max(0.001, time.time() - start_ts)
-        rate = processed / elapsed * 60.0
-        pending = self.pending_count()
-        self._log("DATABASE",
-                  f"Crawl section done in {elapsed/60:.1f} min ({rate:.0f} pages/min). "
-                  f"Stored {stored} new, refreshed {updated}; "
-                  f"{pending} pages still pending site-wide.")
-        return {"stored": stored, "updated": updated, "processed": processed,
-                "pending": pending, "elapsed_min": round(elapsed / 60, 1),
-                "rate_per_min": round(rate)}
-
-    def _count_status(self, status):
-        with self._db_lock:
-            self.db.cursor.execute(
-                "SELECT COUNT(*) FROM crawl_state WHERE status=?", (status,))
-            return self.db.cursor.fetchone()[0]
-
-    def crawl_until_drained(self, max_pages=50000, seeds=None, stop_flag=None,
-                            concurrency=10, delay=0.0, max_rounds=25):
-        """Crawl, then keep re-queuing pages that were SKIPPED (timeouts, rate
-        limits, transient 5xx) and crawl again — repeating until a full pass
-        leaves nothing retryable. "Nothing retryable" means the frontier is
-        empty AND the only failures left are permanent (404/410, marked 'dead')
-        or genuinely stuck.
-
-        Always terminates, three ways:
-          * clean drain  — no queued and no skipped pages remain;
-          * stall guard  — the skipped-page count stops shrinking for 2 rounds
-                            (those URLs are effectively unreachable right now);
-          * round cap     — `max_rounds` reached.
-        Pages left as 'skip' get another chance on the next scheduled sync.
-        Returns aggregate totals plus round/remaining counts."""
-        if not SCRAPER_AVAILABLE:
-            self._log("DATABASE",
-                      "Scraper unavailable: " + self.availability_message())
-            return {"stored": 0, "updated": 0, "processed": 0, "pending": 0,
-                    "rounds": 0, "remaining_skips": 0,

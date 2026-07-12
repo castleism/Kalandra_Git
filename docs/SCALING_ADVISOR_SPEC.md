@@ -225,22 +225,22 @@ fallback branches). All advisory.
 
 ## Open questions
 
-1. poe2db tag markup for **uniques, mods, and passive nodes** — what element/class
-   carries their tags? (Gems use `<a class="GemTags">`; items showed
-   `KeywordPopups`.) Drives P1.5.
-2. `kind` classification: derive from `source_url` path segments, page structure,
-   or a small rules table?
+1. ~~poe2db tag markup for **uniques, mods, and passive nodes**~~ **ANSWERED
+   2026-07-12 (verified in a live browser), shipped as P1.5:** uniques & base
+   items carry `<a class="KeywordPopups" data-keyword="...">` chips in the item
+   popup; passive nodes (keystone/notable popups) carry the same keyword links
+   in their keyword cards; mod tables (item-class pages like `/us/Amulets`) use
+   `span.badge[data-tag]` chips on the ModifiersCalc rows; gems keep
+   `<a class="GemTags">`.
+2. ~~`kind` classification~~ **ANSWERED 2026-07-12, shipped as P1.5:** page
+   structure — the first `newItemPopup`'s class names the kind (`UniquePopup`,
+   `keystonePopup`/`notablePopup`, `GemPopup`, `NormalPopup`…), with a
+   mod-table check before the base-item fallback; stored in
+   `knowledge_ledger.kind`.
 3. Ranking: is tag-overlap count the right primary sort, or weight by tag rarity
    (a rare shared tag is more meaningful than `Physical`)?
 4. Craft cost model: pull live currency values (poe.ninja) vs static heuristics
    for the estimate?
 5. Secondary-focus input: infer from the loaded build's existing scaling, or ask
    the player each time?
-6. Community tags: local-only vs shared; if shared, moderation/voting model and
-   how "unverified" is surfaced so it never masquerades as authoritative.
-7. Meta-mining data access: can poe.ninja be filtered by item server-side, or
-   must we sample player builds and aggregate client-side within rate limits?
-   Co-occurrence normalization (lift/PMI) to stop ubiquitous items dominating.
-8. Applier identification: model an explicit `applies: <effect>` relationship in
-   the graph (scraped + community) so appliers are directly queryable for both
-   the tag search and the meta-miner.
+6. Community tags: local-only vs shared; if shared, moderation/voting model a
