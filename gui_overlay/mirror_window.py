@@ -699,6 +699,65 @@ if PYQT_AVAILABLE:
                 super().keyPressEvent(ev)
 
 
+    class CollapsibleSection(QWidget):
+        """A themed expand/collapse box for the Settings dialog: a gold header
+        button with a ▸/▾ arrow and a live status suffix, and a content area
+        that hides when collapsed. NOTHING is ever removed — a collapsed
+        section is one click from open (the settings-redesign rule: rarely
+        used ≠ hidden). Callers add widgets/layouts to ``.body``."""
+
+        def __init__(self, title, expanded=True, parent=None):
+            super().__init__(parent)
+            self._title = title
+            self._status = ""
+            self._user_touched = False
+            v = QVBoxLayout(self)
+            v.setContentsMargins(0, 6, 0, 0)
+            v.setSpacing(4)
+            self.toggle = QPushButton()
+            self.toggle.setCheckable(True)
+            self.toggle.setChecked(bool(expanded))
+            self.toggle.setCursor(Qt.CursorShape.PointingHandCursor)
+            self.toggle.setStyleSheet(
+                "QPushButton{text-align:left;font-weight:bold;color:#d4a373;"
+                "background:#151a21;border:1px solid #262c36;"
+                "border-radius:6px;padding:6px 10px;font-size:13px;}"
+                "QPushButton:hover{border-color:#d4a373;}")
+            self.toggle.clicked.connect(self._on_toggle)
+            v.addWidget(self.toggle)
+            self.body_widget = QFrame()
+            self.body_widget.setStyleSheet("QFrame{border:none;}")
+            self.body = QVBoxLayout(self.body_widget)
+            self.body.setContentsMargins(10, 2, 0, 2)
+            v.addWidget(self.body_widget)
+            self._sync()
+
+        def _on_toggle(self):
+            self._user_touched = True   # a manual choice beats auto-collapse
+            self._sync()
+
+        def _sync(self):
+            exp = self.toggle.isChecked()
+            self.body_widget.setVisible(exp)
+            arrow = "▾" if exp else "▸"
+            suffix = f"    {self._status}" if self._status else ""
+            self.toggle.setText(f"{arrow}  {self._title}{suffix}")
+
+        def set_status(self, text):
+            """Short live summary shown on the header (visible even collapsed,
+            so a closed section still tells you its state)."""
+            self._status = text or ""
+            self._sync()
+
+        def set_collapsed(self, collapsed, auto=False):
+            """Programmatic open/close. auto=True never overrides a toggle the
+            user made themselves this session."""
+            if auto and self._user_touched:
+                return
+            self.toggle.setChecked(not collapsed)
+            self._sync()
+
+
     class SettingsDialog(KalandraFrameDialog):
         _voices_loaded = pyqtSignal(list)
         _conn_loaded = pyqtSignal(dict)
@@ -746,14 +805,17 @@ if PYQT_AVAILABLE:
         def _build_ui(self):
             root = self.body
 
-            title = QLabel("<b>Oracle Setup &amp; Account Linking</b>")
+            title = QLabel("<b>Settings &amp; Accounts</b>")
             title.setStyleSheet("font-size:16px;color:#d4a373;")
             root.addWidget(title)
 
-            note = QLabel(self.am.storage_note() if self.am else "Account storage unavailable.")
-            note.setWordWrap(True)
-            note.setStyleSheet("color:#9aa4b2;font-size:11px;")
-            root.addWidget(note)
+            # Redesign 2026-07-12: the everyday settings (AI brain/model, DB
+            # sync speed, price checker, voice, companion orb) sit up top at
+            # full size. The set-once stuff — Oracle setup (API key, budget)
+            # and account linking — lives in CollapsibleSections in the scroll
+            # area below: open on first run, collapsed once configured, and
+            # never hidden (one click reopens them; the header always shows
+            # their live status).
 
             # --- AI brain selector (provider + model + live usage) ---
             try:
@@ -778,25 +840,19 @@ if PYQT_AVAILABLE:
             self.model_combo.currentTextChanged.connect(self._on_model_change)
             brain_row.addWidget(self.model_combo, 1)
             root.addLayout(brain_row)
-            # Live usage (tokens this session vs your self-set budget).
-            self.usage_lbl = QLabel("")
-            self.usage_lbl.setStyleSheet("color:#9aa4b2;font-size:11px;")
-            self.usage_lbl.setWordWrap(True)
-            root.addWidget(self.usage_lbl)
-            budget_row = QHBoxLayout()
-            budget_row.addWidget(QLabel("Session token budget (0 = off):"))
-            self.budget_edit = QLineEdit(str(self.config.get("token_budget", 0)))
-            self.budget_edit.setFixedWidth(110)
-            self.budget_edit.editingFinished.connect(self._on_budget_change)
-            budget_row.addWidget(self.budget_edit)
-            budget_row.addStretch()
-            root.addLayout(budget_row)
-            bhint = QLabel("Note: providers don't expose your real account balance, so this "
-                           "is a self-set cap on tokens used this session — you'll get a "
-                           "countdown warning as you approach it.")
-            bhint.setStyleSheet("color:#7d8694;font-size:10px;")
-            bhint.setWordWrap(True)
-            root.addWidget(bhint)
+
+            # --- 🔮 Oracle setup (collapsible; parked in the scroll area
+            #     below once it's built). API key + budget are set once and
+            #     rarely revisited, so they fold away after first setup.
+            self.oracle_sec = CollapsibleSection(
+                "🔮 Oracle setup — API key, session budget & usage",
+                expanded=not bool(self.config.get("settings_oracle_done")))
+            osec = self.oracle_sec.body
+            note = QLabel(self.am.storage_note() if self.am
+                          else "Account storage unavailable.")
+            note.setWordWrap(True)
+            note.setStyleSheet("color:#9aa4b2;font-size:11px;")
+            osec.addWidget(note)
             # ONE key row for whichever brain is selected above — no more
             # per-provider rows cluttering the account list.
             key_row = QHBoxLayout()
@@ -815,10 +871,29 @@ if PYQT_AVAILABLE:
             self.ai_key_btn = QPushButton("Get key ↗")
             self.ai_key_btn.clicked.connect(self._open_ai_key_page)
             key_row.addWidget(self.ai_key_btn)
-            root.addLayout(key_row)
+            osec.addLayout(key_row)
             self.ai_key_status = QLabel("")
             self.ai_key_status.setStyleSheet("color:#9aa4b2;font-size:10px;")
-            root.addWidget(self.ai_key_status)
+            osec.addWidget(self.ai_key_status)
+            # Live usage (tokens this session vs your self-set budget).
+            self.usage_lbl = QLabel("")
+            self.usage_lbl.setStyleSheet("color:#9aa4b2;font-size:11px;")
+            self.usage_lbl.setWordWrap(True)
+            osec.addWidget(self.usage_lbl)
+            budget_row = QHBoxLayout()
+            budget_row.addWidget(QLabel("Session token budget (0 = off):"))
+            self.budget_edit = QLineEdit(str(self.config.get("token_budget", 0)))
+            self.budget_edit.setFixedWidth(110)
+            self.budget_edit.editingFinished.connect(self._on_budget_change)
+            budget_row.addWidget(self.budget_edit)
+            budget_row.addStretch()
+            osec.addLayout(budget_row)
+            bhint = QLabel("Note: providers don't expose your real account balance, so this "
+                           "is a self-set cap on tokens used this session — you'll get a "
+                           "countdown warning as you approach it.")
+            bhint.setStyleSheet("color:#7d8694;font-size:10px;")
+            bhint.setWordWrap(True)
+            osec.addWidget(bhint)
             self._reload_models(cur)
             self._refresh_usage_label()
             self._refresh_ai_key_row()
@@ -898,19 +973,21 @@ if PYQT_AVAILABLE:
                 self.orb_hint.setWordWrap(True)
                 root.addWidget(self.orb_hint)
 
-            # --- Scrollable service list ---
+            # --- Scrollable body: Oracle setup, account linking (both
+            #     collapsible), then the dashboard/custom tab pickers ---
             scroll = QScrollArea()
             scroll.setWidgetResizable(True)
             container = QWidget()
             grid = QVBoxLayout(container)
 
-            # --- Dashboard tabs: pick which to show ---
-            self._build_dashboard_tabs_section(grid)
-            # --- Custom tabs: user-added website/program tabs ---
-            try:
-                self._build_custom_tabs_section(grid)
-            except Exception:
-                pass
+            grid.addWidget(self.oracle_sec)
+
+            # --- 🔗 Account linking (collapsible): secondary services fold
+            #     away once at least one is linked; header keeps a live count.
+            self.accounts_sec = CollapsibleSection(
+                "🔗 Account linking — builds, tools & external accounts",
+                expanded=not bool(self.config.get("settings_accounts_done")))
+            acc = self.accounts_sec.body
 
             self.fields = {}
             if self.am:
@@ -937,15 +1014,24 @@ if PYQT_AVAILABLE:
                     hdr = QLabel(f"<b>{title}</b>")
                     hdr.setStyleSheet("color:#d4a373;font-size:14px;"
                                       "margin-top:10px;letter-spacing:1px;")
-                    grid.addWidget(hdr)
+                    acc.addWidget(hdr)
                     for svc in got:
-                        grid.addWidget(self._service_row(svc))
+                        acc.addWidget(self._service_row(svc))
                 for svc in meta.values():   # anything new lands at the end
-                    grid.addWidget(self._service_row(svc))
+                    acc.addWidget(self._service_row(svc))
                 # Check which accounts are actually connected off the UI thread.
                 threading.Thread(target=self._load_connections, daemon=True).start()
             else:
-                grid.addWidget(QLabel("AccountManager unavailable (pip install keyring)."))
+                acc.addWidget(QLabel("AccountManager unavailable (pip install keyring)."))
+            grid.addWidget(self.accounts_sec)
+
+            # --- Dashboard tabs: pick which to show (everyday — stays open) ---
+            self._build_dashboard_tabs_section(grid)
+            # --- Custom tabs: user-added website/program tabs ---
+            try:
+                self._build_custom_tabs_section(grid)
+            except Exception:
+                pass
 
             grid.addStretch()
             scroll.setWidget(container)
@@ -1263,6 +1349,19 @@ if PYQT_AVAILABLE:
                                    f"<span style='color:#7d8694;'>[{kind}]</span>  {status}")
                 except Exception:
                     pass
+            # Live count on the collapsible header + "collapsed once set":
+            # the first linked account marks the section configured, so the
+            # NEXT Settings open starts with it folded (never yanked shut
+            # mid-session, never hidden).
+            try:
+                n = sum(1 for v in res.values() if v)
+                self.accounts_sec.set_status(
+                    f"🟢 {n} linked" if n else "⚪ none linked yet")
+                if n and not self.config.get("settings_accounts_done"):
+                    self.config["settings_accounts_done"] = True
+                    save_config(self.config)
+            except Exception:
+                pass
 
         def _service_row(self, svc):
             box = QFrame()
@@ -1701,15 +1800,36 @@ if PYQT_AVAILABLE:
             self.ai_key_btn.setEnabled(bool(API_KEY_URLS.get(pid)))
             def _check():
                 ok = bool(self.am and self.am.is_connected(pid))
-                QTimer.singleShot(0, lambda: self.ai_key_status.setText(
-                    f"🟢 {label}: key saved in your OS keychain." if ok
-                    else f"⚪ {label}: no key saved yet."))
+                QTimer.singleShot(0, lambda: self._set_ai_key_state(label, ok))
             threading.Thread(target=_check, daemon=True).start()
+
+        def _set_ai_key_state(self, label, ok):
+            """Reflect the async keychain check in the key row AND the Oracle
+            section header; a saved key marks the section configured so the
+            NEXT Settings open starts with it folded."""
+            self.ai_key_status.setText(
+                f"🟢 {label}: key saved in your OS keychain." if ok
+                else f"⚪ {label}: no key saved yet.")
+            try:
+                self.oracle_sec.set_status(
+                    f"🟢 {label} key saved" if ok else "⚪ no key yet")
+                if ok and not self.config.get("settings_oracle_done"):
+                    self.config["settings_oracle_done"] = True
+                    save_config(self.config)
+            except Exception:
+                pass
 
         def _save_ai_key(self):
             pid = self.brain_combo.currentData() or "openai"
             if self.am and self.am.set_secret(pid, self.ai_key_edit.text().strip()):
                 self.ai_key_status.setText("🟢 Key saved.")
+                try:
+                    self.oracle_sec.set_status("🟢 key saved")
+                    if not self.config.get("settings_oracle_done"):
+                        self.config["settings_oracle_done"] = True
+                        save_config(self.config)
+                except Exception:
+                    pass
             else:
                 self.ai_key_status.setText("⚠ Couldn't store the key "
                                            "(pip install keyring).")
@@ -1720,6 +1840,10 @@ if PYQT_AVAILABLE:
             if self.am:
                 self.am.clear(pid)
             self.ai_key_status.setText("Key cleared.")
+            try:
+                self.oracle_sec.set_status("⚪ no key yet")
+            except Exception:
+                pass
 
         def _open_ai_key_page(self):
             pid = self.brain_combo.currentData() or "openai"
@@ -4758,71 +4882,4 @@ class KalandraOverlayApp(ParentClass):
                 # LAUNCHED get WM_CLOSE (terminate only as fallback); adopted
                 # EXTERNAL instances are released back to the desktop intact.
                 try:
-                    self._dashboard.shutdown_embedded()
-                except Exception:
-                    pass
-                self._dashboard.deleteLater()
-        except Exception:
-            pass
-        app = QApplication.instance()
-        if app is not None:
-            app.quit()
-
-
-def _install_crash_guard():
-    """Record unhandled exceptions (main thread AND worker threads) to a crash
-    log instead of letting them vanish or abort the app without a trace."""
-    import sys as _sys
-
-    def _log_crash(where, exc_type, exc, tb):
-        try:
-            os.makedirs("data_engine", exist_ok=True)
-            with open(os.path.join("data_engine", "crash.log"), "a", encoding="utf-8") as f:
-                f.write(f"\n===== {datetime.now().isoformat()} ({where}) =====\n")
-                traceback.print_exception(exc_type, exc, tb, file=f)
-        except Exception:
-            pass
-        try:
-            traceback.print_exception(exc_type, exc, tb)
-        except Exception:
-            pass
-
-    def _hook(exc_type, exc, tb):
-        _log_crash("main", exc_type, exc, tb)
-    _sys.excepthook = _hook
-
-    # Worker-thread exceptions (Python 3.8+).
-    try:
-        def _thook(args):
-            _log_crash(f"thread:{getattr(args, 'thread', None)}",
-                       args.exc_type, args.exc_value, args.exc_traceback)
-        threading.excepthook = _thook
-    except Exception:
-        pass
-
-
-if __name__ == "__main__":
-    if PYQT_AVAILABLE:
-        try:
-            _install_crash_guard()
-            try:
-                QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts, True)
-            except Exception:
-                pass
-            app = QApplication(sys.argv)
-            app.setQuitOnLastWindowClosed(False)  # overlay (a Tool window) owns exit
-            overlay = KalandraOverlayApp()
-            overlay.show()
-            QTimer.singleShot(800, overlay.initial_sync)
-            QTimer.singleShot(1200, overlay.startup_freshness_check)
-            QTimer.singleShot(1600, overlay.startup_game_data_check)
-            exit_code = app.exec()
-            print("\n=========================================================")
-            print(f"    KALANDRA OVERLAY v{KALANDRA_VERSION} TERMINATED SAFELY.")
-            print("    Press Enter to close this diagnostic terminal window...")
-            print("=========================================================")
-            input()
-            sys.exit(exit_code)
-        except Exception:
-            print("\n=========================================================")
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              
+                    se
