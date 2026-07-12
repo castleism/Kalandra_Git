@@ -66,9 +66,27 @@ class KalandraTagGraph:
     KINDS = ("skill_gem", "support_gem", "unique", "mod", "passive", "item",
              "other")
 
-    def __init__(self, db_handler):
+    def __init__(self, db_handler, community=None):
+        """`community` is an optional CommunityTags overlay (player-reported
+        tags/interactions, spec P2.5). Pass an instance to share one, pass
+        False to disable, or leave None to lazily open the default file on
+        first use. Community data only ever ADDS marked, non-authoritative
+        hints — with an empty overlay every result is identical to before."""
         self.db = db_handler
         self._idf_cache = None
+        self._community = community
+        self._community_tried = community is not None
+
+    @property
+    def community(self):
+        if not self._community_tried:
+            self._community_tried = True
+            try:
+                from core_engine.community_tags import CommunityTags
+                self._community = CommunityTags()
+            except Exception:
+                self._community = None
+        return self._community or None
 
     # -- public API -----------------------------------------------------------
     def tags_for(self, entity):
@@ -159,17 +177,49 @@ class KalandraTagGraph:
         scored.sort(key=lambda a: (-a["score"], -a["overlap"], a["title"].lower()))
         return scored[:limit]
 
+    def community_tags_for(self, entity):
+        """Player-reported tags for `entity` that the scrape doesn't already
+        have — each {tag, verified, votes, id}. Marked data, never merged
+        silently into the authoritative tag list."""
+        ct = self.community
+        if ct is None:
+            return []
+        try:
+            scraped = {_norm(t) for t in self.tags_for(entity)}
+            return [c for c in ct.tags_for(entity)
+                    if _norm(c.get("tag")) not in scraped]
+        except Exception:
+            return []
+
+    def community_appliers(self, entity):
+        """Entities the community says APPLY `entity` (e.g. what applies
+        Corrupted Blood) — feeds the advisor + the future meta-miner."""
+        ct = self.community
+        if ct is None:
+            return []
+        try:
+            return ct.appliers_of(entity)
+        except Exception:
+            return []
+
     def scaling_sources(self, entity, per_kind=8, limit=48):
         """Everything the DB knows about scaling `entity`: its tags + the assets
-        sharing them, grouped by kind. Returns a structured dict (never raises)."""
+        sharing them, grouped by kind. Community-reported tags (P2.5) widen the
+        reverse lookup but are returned SEPARATELY and marked. Returns a
+        structured dict (never raises)."""
         subject_tags = self.tags_for(entity)
+        community = self.community_tags_for(entity)
+        appliers = self.community_appliers(entity)
         result = {"subject": entity, "subject_tags": subject_tags,
+                  "community_tags": community, "appliers": appliers,
                   "groups": {}, "total": 0, "note": ""}
-        if not subject_tags:
+        if not subject_tags and not community:
             result["note"] = ("No tags for this entity in the database yet — run a "
-                              "Sync, or it may be a page kind we don't tag yet.")
+                              "Sync, or it may be a page kind we don't tag yet. "
+                              "You can also suggest a tag yourself (player-reported).")
             return result
-        assets = self.assets_with_tags(subject_tags, exclude=entity, limit=limit)
+        lookup_tags = subject_tags + [c["tag"] for c in community]
+        assets = self.assets_with_tags(lookup_tags, exclude=entity, limit=limit)
         groups = {}
         for a in assets:
             groups.setdefault(a["kind"], [])
@@ -189,82 +239,26 @@ class KalandraTagGraph:
 
     def context_block(self, entity, limit=40):
         """Prompt-ready grounding block for the Orb, or '' if we have nothing.
-        The Orb is instructed to name ONLY assets that appear here."""
+        The Orb is instructed to name ONLY assets that appear here. Community
+        (player-reported) data is labeled so the Orb presents it as a hint,
+        never as ground truth."""
         src = self.scaling_sources(entity, limit=limit)
-        if not src["subject_tags"]:
+        if not src["subject_tags"] and not src.get("community_tags"):
             return ""
         lines = [
             "SCALING SOURCES (from the local database — ground your answer in THIS. "
             "List only assets that appear below; if a category is empty, say the DB "
             "doesn't have it yet rather than guessing):",
-            f"- {entity} tags: {', '.join(src['subject_tags'])}",
         ]
-        if src["total"] == 0:
-            lines.append("- No other tagged assets in the DB share these tags yet "
-                         "(coverage is still growing).")
-            return "\n".join(lines)
-        for kind in self.KINDS:
-            items = src["groups"].get(kind)
-            if not items:
-                continue
-            label = self._KIND_LABELS.get(kind, kind)
-            names = ", ".join(f"{a['title']} [{', '.join(a['shared'])}]"
-                              for a in items)
-            lines.append(f"- {label}: {names}")
-        return "\n".join(lines)
-
-    # -- internals ------------------------------------------------------------
-    def _candidate_rows(self, want, cap):
-        """(title, url, tags, kind) rows that plausibly share a tag, cheaply.
-        Uses the FTS tags column when available (fast), else a bounded scan of
-        tagged rows."""
-        cur = self.db.cursor
-        if getattr(self.db, "fts_enabled", False):
-            try:
-                # OR of the wanted tags, restricted to the `tags` FTS column.
-                phrases = " OR ".join('"%s"' % re.sub(r'"', "", t) for t in want)
-                q = "tags : (%s)" % phrases
-                cur.execute(
-                    "SELECT l.topic_tag, l.source_url, l.tags, l.kind "
-                    "FROM knowledge_fts f JOIN knowledge_ledger l ON l.id=f.rowid "
-                    "WHERE knowledge_fts MATCH ? LIMIT ?", (q, cap))
-                rows = cur.fetchall()
-                if rows:
-                    return rows
-            except Exception:
-                pass
-        # Fallback: scan rows that have any tags (bounded).
-        cur.execute(
-            "SELECT topic_tag, source_url, tags, kind FROM knowledge_ledger "
-            "WHERE tags IS NOT NULL AND tags!='' LIMIT ?", (cap,))
-        return cur.fetchall()
-
-    def _tag_idf(self):
-        """Inverse-document-frequency per tag: rare tags weigh more. Cached."""
-        if self._idf_cache is not None:
-            return self._idf_cache
-        idf = {}
-        try:
-            cur = self.db.cursor
-            cur.execute("SELECT COUNT(*) FROM knowledge_ledger "
-                        "WHERE tags IS NOT NULL AND tags!=''")
-            n = cur.fetchone()[0] or 1
-            freq = {}
-            cur.execute("SELECT tags FROM knowledge_ledger "
-                        "WHERE tags IS NOT NULL AND tags!='' LIMIT 200000")
-            for (tags_str,) in cur.fetchall():
-                for t in {_norm(x) for x in _split_tags(tags_str)}:
-                    freq[t] = freq.get(t, 0) + 1
-            for t, f in freq.items():
-                # classic idf; ubiquitous tags get an extra damp
-                val = math.log((n + 1) / (f + 1)) + 0.1
-                if t in _UBIQUITOUS:
-                    val *= 0.35
-                idf[t] = max(0.05, val)
-        except Exception:
-            idf = {}
-        self._idf_cache = idf
-        return idf
-
-    @staticmethod
-    def _infer_kind(
+        if src["subject_tags"]:
+            lines.append(f"- {entity} tags: {', '.join(src['subject_tags'])}")
+        comm = src.get("community_tags") or []
+        if comm:
+            verified = [c["tag"] for c in comm if c.get("verified")]
+            unverified = [c["tag"] for c in comm if not c.get("verified")]
+            if verified:
+                lines.append(f"- {entity} tags (player-reported, VERIFIED by the "
+                             f"maintainer): {', '.join(verified)}")
+            if unverified:
+                lines.append(f"- {entity} tags (player-reported, UNVERIFIED — "
+                             "present these as community hints, 
