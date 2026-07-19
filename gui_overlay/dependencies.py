@@ -132,6 +132,14 @@ def _build_registry(config):
              "enables": "Cloud AI brain option (needs an OpenAI key).", "check": pip_check("openai")},
             {"id": "genai", "name": "Google GenAI (Gemini)", "kind": "pip", "pip": "google-genai",
              "enables": "Cloud AI brain option (needs a Gemini key).", "check": pip_check("google.genai")},
+            {"id": "kalandra_voice", "name": "Kalandra Voice (offline neural TTS)", "kind": "external",
+             "enables": "A much nicer voice for the Orb — free, offline, no account or API key. "
+                        "Install with launchers/Install Kalandra Voice.bat (or the 'Get free "
+                        "voice' button next to the voice picker in Settings).",
+             "file": "piper.exe",
+             "url": "https://github.com/rhasspy/piper/releases", "path_key": "piper_path",
+             "check": ext_check(["piper_path"], "piper.exe",
+                                [os.path.join("tools", "piper")])},
             {"id": "rhubarb", "name": "Rhubarb Lip Sync", "kind": "external",
              "enables": "Phoneme-accurate mouth shapes for the talking face.",
              "file": "rhubarb.exe",
@@ -424,9 +432,11 @@ class DependenciesDialog(KalandraFrameDialog):
 
     def _run_auto_installer(self):
         self._append_log("Running automated installer (downloads can take a few minutes)…")
-        script = os.path.join(os.getcwd(), "install_dependencies.py")
+        script = os.path.join(os.getcwd(), "scripts", "install_dependencies.py")
+        if not os.path.exists(script):                       # pre-reorg fallback
+            script = os.path.join(os.getcwd(), "install_dependencies.py")
         if not os.path.exists(script):
-            self._append_log("install_dependencies.py not found in the project root.")
+            self._append_log("scripts/install_dependencies.py not found in the project root.")
             return
         def _work():
             try:

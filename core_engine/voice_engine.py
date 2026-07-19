@@ -93,6 +93,78 @@ STT_SAMPLERATE = 16000  # Whisper expects 16 kHz mono.
 
 
 # ----------------------------------------------------------------------------
+# KALANDRA VOICE — bundled offline neural TTS (Piper). No account, no API key,
+# no cloud: scripts/install_voice.py drops piper + a voice model into
+# tools/piper/ and the Orb speaks with it. voice_id == "piper" selects it; the
+# pyttsx3 system voice remains both the alternative and the automatic fallback.
+# ----------------------------------------------------------------------------
+PIPER_VOICE_ID = "piper"
+PIPER_VOICE_LABEL = "Kalandra Voice — free offline neural voice"
+
+
+def _config_value(key):
+    try:
+        with open(os.path.join("data_engine", "config.json"), "r", encoding="utf-8") as f:
+            return json.load(f).get(key)
+    except Exception:
+        return None
+
+
+def piper_paths():
+    """Locate the Piper engine + voice model. Returns (exe, model) or (None, None).
+
+    Order: config keys written by the installer, then PATH, then a vendored
+    copy under tools/piper/ (exe) and tools/piper/voices/*.onnx (model)."""
+    exe = _config_value("piper_path")
+    if not (exe and os.path.exists(exe)):
+        exe = shutil.which("piper") or shutil.which("piper.exe")
+    if not (exe and os.path.exists(exe)):
+        import glob as _glob
+        hits = [h for h in _glob.glob(os.path.join("tools", "piper", "**", "piper*"),
+                                      recursive=True)
+                if os.path.basename(h).lower() in ("piper.exe", "piper")]
+        exe = os.path.abspath(hits[0]) if hits else None
+
+    model = _config_value("piper_voice")
+    if not (model and os.path.exists(model)):
+        import glob as _glob
+        hits = sorted(_glob.glob(os.path.join("tools", "piper", "voices", "*.onnx")))
+        model = os.path.abspath(hits[0]) if hits else None
+
+    if exe and model and os.path.exists(model + ".json"):
+        return exe, model
+    return None, None
+
+
+def piper_available():
+    return piper_paths()[0] is not None
+
+
+# find_spec says pyttsx3 is INSTALLED; only init() proves it can actually
+# speak (missing SAPI/espeak drivers make init raise). Probed once, cached,
+# so availability_message() never claims "ready" for a voice that can't start.
+_tts_verified = None
+
+
+def tts_actually_works():
+    global _tts_verified
+    if _tts_verified is None:
+        if not TTS_AVAILABLE:
+            _tts_verified = False
+        else:
+            try:
+                eng = _get_pyttsx3().init()
+                try:
+                    eng.stop()
+                except Exception:
+                    pass
+                _tts_verified = True
+            except Exception:
+                _tts_verified = False
+    return _tts_verified
+
+
+# ----------------------------------------------------------------------------
 # AI PROVIDERS — every LLM the Orb can use. Most expose an OpenAI-compatible API
 # (kind="openai" with a base_url); Anthropic and Gemini use their own SDKs.
 # Model lists are editable in the UI because provider model IDs change over time.
@@ -195,7 +267,15 @@ class VoiceEngine:
     def availability_message(self):
         bits = []
         bits.append("Local transcription: " + ("ready" if STT_AVAILABLE else "MISSING (pip install faster-whisper sounddevice numpy)"))
-        bits.append("Local voice (TTS): " + ("ready" if TTS_AVAILABLE else "MISSING (pip install pyttsx3)"))
+        if piper_available():
+            bits.append("Kalandra Voice (offline neural TTS): ready")
+        if TTS_AVAILABLE:
+            bits.append("Local voice (TTS): " + (
+                "ready" if tts_actually_works() else
+                "installed but NOT working (pyttsx3 can't start — check your "
+                "system speech voices)"))
+        else:
+            bits.append("Local voice (TTS): MISSING (pip install pyttsx3)")
         bits.append("AI brain: " + (self.brain if self._brain_key() else f"{self.brain} (no API key set)"))
         return "\n".join(bits)
 
@@ -567,7 +647,7 @@ class VoiceEngine:
         the mouth still moves). on_done() fires when finished. Runs on a
         background thread so the UI never blocks.
         """
-        if not TTS_AVAILABLE or not text:
+        if (not TTS_AVAILABLE and not piper_available()) or not text:
             if on_done:
                 on_done()
             return False
@@ -601,16 +681,69 @@ class VoiceEngine:
     # -- TTS engine + voice selection -----------------------------------------
     @staticmethod
     def list_voices():
-        """Return [(id, name)] of installed system voices, for the Settings picker."""
+        """Return [(id, name)] of available voices, for the Settings picker.
+        The bundled Kalandra Voice (Piper) is listed first when installed."""
+        out = []
+        if piper_available():
+            out.append((PIPER_VOICE_ID, PIPER_VOICE_LABEL))
         if not TTS_AVAILABLE:
-            return []
+            return out
         try:
             eng = _get_pyttsx3().init()
-            out = [(v.id, getattr(v, "name", v.id)) for v in eng.getProperty("voices")]
+            out += [(v.id, getattr(v, "name", v.id)) for v in eng.getProperty("voices")]
             eng.stop()
             return out
         except Exception:
-            return []
+            return out
+
+    @staticmethod
+    def piper_available():
+        """True when the bundled offline Kalandra Voice (Piper) is installed."""
+        return piper_available()
+
+    def _use_piper(self):
+        """Piper speaks when the user picked it, or when it's the only voice."""
+        if not piper_available():
+            return False
+        return self.voice_id == PIPER_VOICE_ID or not TTS_AVAILABLE
+
+    def _piper_render(self, text, wav_path):
+        """Render `text` to wav_path with the bundled Piper voice. True on success."""
+        exe, model = piper_paths()
+        if not exe:
+            return False
+        cmd = [exe, "-m", model, "-f", wav_path]
+        if self.voice_rate:
+            # pyttsx3 rates are words/min (default ~200). Piper's length_scale
+            # stretches phonemes (1.0 = native, >1 slower). Map one to the other.
+            try:
+                scale = max(0.5, min(2.0, 200.0 / float(self.voice_rate)))
+                cmd += ["--length_scale", f"{scale:.2f}"]
+            except Exception:
+                pass
+        try:
+            subprocess.run(cmd, input=text.encode("utf-8"),
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                           cwd=os.path.dirname(exe), timeout=120)
+            return os.path.exists(wav_path) and os.path.getsize(wav_path) > 1024
+        except Exception as e:
+            self._log("VOICE", f"Kalandra Voice (piper) render failed: {e}")
+            return False
+
+    def _render_wav(self, text, wav_path):
+        """Render speech to a wav with the selected voice. Piper first when
+        chosen, then the pyttsx3 system voice as the fallback. True on success."""
+        if self._use_piper():
+            if self._piper_render(text, wav_path):
+                return True
+            self._log("VOICE", "Kalandra Voice unavailable — falling back to the system voice.")
+        if not TTS_AVAILABLE:
+            return False
+        engine = self._make_engine()
+        engine.save_to_file(text, wav_path)
+        engine.runAndWait()
+        engine.stop()
+        return os.path.exists(wav_path) and os.path.getsize(wav_path) >= 1024
 
     def _make_engine(self):
         eng = _get_pyttsx3().init()
@@ -673,15 +806,11 @@ class VoiceEngine:
         """Render TTS to a wav, compute a loudness envelope, play it while
         emitting amplitude frames (and Rhubarb viseme shapes) in sync.
         Returns True on success."""
-        if np is None or _sd is None:
+        if np is None or not _module_installed("sounddevice"):
             return False  # need numpy + sounddevice for real analysis/playback
 
         tmp = os.path.join(tempfile.gettempdir(), f"kalandra_tts_{os.getpid()}.wav")
-        engine = self._make_engine()
-        engine.save_to_file(text, tmp)
-        engine.runAndWait()
-        engine.stop()
-        if not os.path.exists(tmp) or os.path.getsize(tmp) < 1024:
+        if not self._render_wav(text, tmp):
             return False
 
         with wave.open(tmp, "rb") as wf:
@@ -783,10 +912,29 @@ class VoiceEngine:
         flap = threading.Thread(target=_flap, daemon=True)
         flap.start()
         try:
-            engine = self._make_engine()
-            engine.say(text)
-            engine.runAndWait()
-            engine.stop()
+            if TTS_AVAILABLE:
+                engine = self._make_engine()
+                engine.say(text)
+                engine.runAndWait()
+                engine.stop()
+            elif self._use_piper():
+                # No pyttsx3 on this machine: render with the Kalandra Voice and
+                # play the wav directly (winsound on Windows blocks until done).
+                tmp = os.path.join(tempfile.gettempdir(), f"kalandra_tts_{os.getpid()}.wav")
+                if self._piper_render(text, tmp):
+                    try:
+                        if os.name == "nt":
+                            import winsound
+                            winsound.PlaySound(tmp, winsound.SND_FILENAME)
+                        else:
+                            subprocess.run(["aplay", tmp], timeout=300,
+                                           stdout=subprocess.DEVNULL,
+                                           stderr=subprocess.DEVNULL)
+                    finally:
+                        try:
+                            os.remove(tmp)
+                        except Exception:
+                            pass
         finally:
             stop.set()
             flap.join(timeout=1.0)

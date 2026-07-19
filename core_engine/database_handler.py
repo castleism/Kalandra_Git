@@ -179,4 +179,153 @@ class KalandraDBHandler:
 
     def rebuild_fts(self):
         """Force a full reindex (e.g. after a bulk import). No-op if FTS is off."""
-        if not getattr(self,
+        if not getattr(self, "fts_enabled", False):
+            return False
+        try:
+            self.cursor.execute(
+                "INSERT INTO knowledge_fts(knowledge_fts) VALUES('rebuild')")
+            self.conn.commit()
+            return True
+        except Exception:
+            return False
+
+    def insert_scoured_data(self, topic, content, url, version="Patch 0.5.4",
+                            tags="", kind=""):
+        """
+        Inserts newly parsed game data with an absolute, trackable timestamp.
+        `tags` is poe2db's own tag line for the page (may be ""); `kind` is the
+        scraper's page-kind classification (may be "" when unknown).
+        """
+        current_time = datetime.now().isoformat()
+        self.cursor.execute("""
+            INSERT INTO knowledge_ledger (topic_tag, content_payload, source_url, scraped_at, game_version_tag, tags, kind)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (topic, content, url, current_time, version, tags or "", kind or ""))
+        self.conn.commit()
+        return self.cursor.lastrowid
+
+    def update_scoured_data(self, topic, content, url, version="Patch 0.5.4",
+                            tags="", kind=""):
+        """Refresh an existing ledger entry in place (same source_url). Used by
+        the crawler's re-check passes: page content changes after patches, and
+        without this a re-fetch was silently discarded."""
+        current_time = datetime.now().isoformat()
+        self.cursor.execute("""
+            UPDATE knowledge_ledger
+               SET topic_tag=?, content_payload=?, scraped_at=?, game_version_tag=?, tags=?, kind=?
+             WHERE source_url=?
+        """, (topic, content, current_time, version, tags or "", kind or "", url))
+        self.conn.commit()
+        return self.cursor.rowcount
+
+    def log_stream_idea(self, idea_text, build_name="Theorycraft"):
+        """
+        Saves a player's stream notes or raw mechanical theories into the vault.
+        """
+        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        self.cursor.execute("""
+            INSERT INTO player_ideas (idea_summary, logged_at, associated_build)
+            VALUES (?, ?, ?)
+        """, (idea_text, current_time, build_name))
+        self.conn.commit()
+
+    def get_clickable_citation(self, record_id):
+        """
+        Constructs an HTML-safe clickable anchor link based on the database index ID.
+        """
+        self.cursor.execute("SELECT source_url FROM knowledge_ledger WHERE id = ?", (record_id,))
+        result = self.cursor.fetchone()
+        if result and result[0]:
+            return f'<a href="{result[0]}" style="color: #d4a373; font-weight: bold;">[Source Document #{record_id}]</a>'
+        return "[Citation Link Unavailable]"
+
+    def close(self):
+        """Safely terminates the database connection."""
+        self.conn.close()
+
+
+def db_status(db_path):
+    """Read-only, one-pass health summary of a knowledge DB — the data layer
+    behind the DB status window (double-click the sync medallion).
+
+    Always returns the complete shape, fail-soft on every field:
+      {exists, size_bytes, pages, last_scraped,
+       versions:  {game_version_tag: count},
+       sources:   {domain: count},
+       pending:   {queued, error, done}}
+    Never creates or modifies any file (opens sqlite read-only)."""
+    import os as _os, sqlite3 as _sql
+    out = {"exists": False, "size_bytes": 0, "pages": 0, "last_scraped": None,
+           "versions": {}, "sources": {},
+           "pending": {"queued": 0, "error": 0, "done": 0}}
+    if not db_path or not _os.path.exists(db_path):
+        return out
+    out["exists"] = True
+    try:
+        out["size_bytes"] = _os.path.getsize(db_path)
+    except OSError:
+        pass
+    try:
+        uri = "file:" + db_path.replace(_os.sep, "/") + "?mode=ro"
+        con = _sql.connect(uri, uri=True)
+    except Exception:
+        return out
+    try:
+        cur = con.cursor()
+        try:
+            cur.execute("SELECT COUNT(*), MAX(scraped_at) FROM knowledge_ledger")
+            row = cur.fetchone()
+            out["pages"] = int(row[0] or 0)
+            out["last_scraped"] = row[1]
+        except Exception:
+            pass
+        try:
+            cur.execute("SELECT game_version_tag, COUNT(*) FROM knowledge_ledger "
+                        "GROUP BY game_version_tag")
+            out["versions"] = {k: v for k, v in cur.fetchall() if k}
+        except Exception:
+            pass
+        try:
+            from urllib.parse import urlparse
+            cur.execute("SELECT source_url FROM knowledge_ledger")
+            for (u,) in cur.fetchall():
+                try:
+                    host = urlparse(u).netloc
+                except Exception:
+                    host = ""
+                if host:
+                    out["sources"][host] = out["sources"].get(host, 0) + 1
+        except Exception:
+            pass
+        try:
+            cur.execute("SELECT status, COUNT(*) FROM crawl_state GROUP BY status")
+            for status, n in cur.fetchall():
+                if status in out["pending"]:
+                    out["pending"][status] = int(n)
+        except Exception:
+            pass
+    finally:
+        try:
+            con.close()
+        except Exception:
+            pass
+    return out
+
+# Interactive Self-Test Block
+if __name__ == "__main__":
+    print("Testing Kalandra Database System...")
+    db = KalandraDBHandler()
+    
+    # Test Inserting a Scoured Website Resource
+    doc_id = db.insert_scoured_data(
+        topic="Widowhail Scaling Interaction",
+        content="Widowhail bow increases equipped quiver stats by up to 250%.",
+        url="https://poe2db.tw/us/Widowhail"
+    )
+    print(f"Successfully created localized record #{doc_id}.")
+    print(f"Generated Interactive Link: {db.get_clickable_citation(doc_id)}")
+    
+    # Test Logging an On-Stream Idea Note
+    db.log_stream_idea("Saw a reverse-chill setup abusing physical hits from Scolds helmet.")
+    print("Logged streaming note to personal Idea Vault successfully.")
+    db.close()

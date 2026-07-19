@@ -96,7 +96,9 @@ class KnowledgeCorrections:
 
     def _save(self):
         try:
-            os.makedirs(os.path.dirname(self.path), exist_ok=True)
+            d = os.path.dirname(self.path)   # "" for a bare filename — skip makedirs
+            if d:
+                os.makedirs(d, exist_ok=True)
             tmp = self.path + ".tmp"
             with open(tmp, "w", encoding="utf-8") as f:
                 json.dump(self._items, f, indent=2, ensure_ascii=False)
@@ -157,4 +159,19 @@ class KnowledgeCorrections:
                 break
         return out
 
-    def context_block(self, 
+    def context_block(self, text, limit=6):
+        hits = self.relevant(text, limit=limit)
+        if not hits:
+            return ""
+        lines = ["VERIFIED CORRECTIONS (authoritative PoE2 facts — these OVERRIDE any "
+                 "conflicting info, including the database and your own assumptions; "
+                 "if a correction applies, follow it exactly):"]
+        for e in hits:
+            lines.append(f"- {e.get('topic','?')}: {e.get('correction','')}")
+        return "\n".join(lines)
+
+
+if __name__ == "__main__":
+    kc = KnowledgeCorrections()
+    print("File:", kc.path, "| entries:", len(kc.all()))
+    print(kc.context_block("how do I scale my corrupted blood from corrupting cry"))

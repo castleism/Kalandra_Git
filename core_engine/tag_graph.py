@@ -261,4 +261,89 @@ class KalandraTagGraph:
                              f"maintainer): {', '.join(verified)}")
             if unverified:
                 lines.append(f"- {entity} tags (player-reported, UNVERIFIED — "
-                             "present these as community hints, 
+                             "present these as community hints, never as fact): "
+                             + ", ".join(unverified))
+        appliers = src.get("appliers") or []
+        if appliers:
+            lines.append(f"- Applied by (player-reported): {', '.join(appliers)}")
+        if src["total"] == 0:
+            lines.append("- No other tagged assets in the DB share these tags yet "
+                         "(coverage is still growing).")
+            return "\n".join(lines)
+        for kind in self.KINDS:
+            items = src["groups"].get(kind)
+            if not items:
+                continue
+            label = self._KIND_LABELS.get(kind, kind)
+            names = ", ".join(f"{a['title']} [{', '.join(a['shared'])}]"
+                              for a in items)
+            lines.append(f"- {label}: {names}")
+        return "\n".join(lines)
+
+    # -- internals ------------------------------------------------------------
+    def _candidate_rows(self, want, cap):
+        """(title, url, tags, kind) rows that plausibly share a tag, cheaply.
+        Uses the FTS tags column when available (fast), else a bounded scan of
+        tagged rows."""
+        cur = self.db.cursor
+        if getattr(self.db, "fts_enabled", False):
+            try:
+                # OR of the wanted tags, restricted to the `tags` FTS column.
+                phrases = " OR ".join('"%s"' % re.sub(r'"', "", t) for t in want)
+                q = "tags : (%s)" % phrases
+                cur.execute(
+                    "SELECT l.topic_tag, l.source_url, l.tags, l.kind "
+                    "FROM knowledge_fts f JOIN knowledge_ledger l ON l.id=f.rowid "
+                    "WHERE knowledge_fts MATCH ? LIMIT ?", (q, cap))
+                rows = cur.fetchall()
+                if rows:
+                    return rows
+            except Exception:
+                pass
+        # Fallback: scan rows that have any tags (bounded).
+        cur.execute(
+            "SELECT topic_tag, source_url, tags, kind FROM knowledge_ledger "
+            "WHERE tags IS NOT NULL AND tags!='' LIMIT ?", (cap,))
+        return cur.fetchall()
+
+    def _tag_idf(self):
+        """Inverse-document-frequency per tag: rare tags weigh more. Cached."""
+        if self._idf_cache is not None:
+            return self._idf_cache
+        idf = {}
+        try:
+            cur = self.db.cursor
+            cur.execute("SELECT COUNT(*) FROM knowledge_ledger "
+                        "WHERE tags IS NOT NULL AND tags!=''")
+            n = cur.fetchone()[0] or 1
+            freq = {}
+            cur.execute("SELECT tags FROM knowledge_ledger "
+                        "WHERE tags IS NOT NULL AND tags!='' LIMIT 200000")
+            for (tags_str,) in cur.fetchall():
+                for t in {_norm(x) for x in _split_tags(tags_str)}:
+                    freq[t] = freq.get(t, 0) + 1
+            for t, f in freq.items():
+                # classic idf; ubiquitous tags get an extra damp
+                val = math.log((n + 1) / (f + 1)) + 0.1
+                if t in _UBIQUITOUS:
+                    val *= 0.35
+                idf[t] = max(0.05, val)
+        except Exception:
+            idf = {}
+        self._idf_cache = idf
+        return idf
+
+    @staticmethod
+    def _infer_kind(url, row_tags):
+        """Best-effort page-kind for rows crawled before the stored `kind`
+        column existed. Conservative: only classify what we're confident
+        about."""
+        norm = {_norm(t) for t in row_tags}
+        if "support" in norm:
+            return "support_gem"
+        u = (url or "").lower()
+        if "support" in u:
+            return "support_gem"
+        if norm & _SKILLISH:
+            return "skill_gem"
+        return "other"

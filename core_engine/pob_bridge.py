@@ -9,6 +9,7 @@ Dependencies: base64, zlib, xml.etree.ElementTree (Standard Python Libraries)
 
 import base64
 import zlib
+import math
 import xml.etree.ElementTree as ET
 
 class KalandraPoBBridge:
@@ -293,12 +294,23 @@ class KalandraPoBBridge:
             clean_code += "=" * (-len(clean_code) % 4)
             compressed_data = base64.b64decode(clean_code)
 
+            # Cap decompressed output: a real PoB2 export is well under a few MB,
+            # but zlib's ~1000:1 ratio means a tiny paste (or a fetched URL body
+            # via resolve_link_to_code) could inflate to gigabytes. Bound it so a
+            # decompression bomb can't exhaust memory.
+            MAX_DECOMPRESSED = 24 * 1024 * 1024   # 24 MB is comfortably huge
             try:
-                decompressed = zlib.decompress(compressed_data)
+                dobj = zlib.decompressobj()
+                decompressed = dobj.decompress(compressed_data, MAX_DECOMPRESSED)
             except zlib.error:
                 # Tolerant fallback: raw-inflate past the 2-byte zlib header,
                 # ignoring a corrupt trailing checksum (survives minor copy damage).
-                decompressed = zlib.decompress(compressed_data[2:], -15)
+                dobj = zlib.decompressobj(-15)
+                decompressed = dobj.decompress(compressed_data[2:], MAX_DECOMPRESSED)
+            if dobj.unconsumed_tail:
+                return {"error": "This build code is unusually large (over 24 MB "
+                                 "decompressed) — it may be corrupted or not a real "
+                                 "Path of Building export."}
             return decompressed.decode('utf-8', 'replace')
 
         except Exception as e:
@@ -353,7 +365,12 @@ class KalandraPoBBridge:
                     continue
                 try:
                     fval = float(val)
-                except ValueError:
+                except (ValueError, TypeError):
+                    continue
+                # Reject NaN/Inf: PoB never legitimately exports them, and
+                # float('inf')/('nan') pass float() cleanly, then poison
+                # json.dumps (emits invalid NaN/Infinity) and round() downstream.
+                if not math.isfinite(fval):
                     continue
                 if "DPS" in name and "Cost" not in name and fval > best_dps:
                     best_dps = fval
@@ -685,9 +702,12 @@ class KalandraPoBBridge:
         def fnum(*keys):
             v = stat(*keys, default=None)
             try:
-                return float(v)
+                f = float(v)
             except (TypeError, ValueError):
                 return None
+            # Non-finite values (a hand-crafted or corrupt export with inf/nan)
+            # would crash round() with OverflowError — treat them as absent.
+            return f if math.isfinite(f) else None
 
         lines = [f"CHARACTER: {full.get('class_name','?')} / {full.get('ascendancy','None')} "
                  f"Lv{full.get('level','?')}"]
@@ -699,7 +719,9 @@ class KalandraPoBBridge:
         for nm, val in s.items():
             if "DPS" in nm and "Cost" not in nm:
                 try:
-                    best = max(best, float(val))
+                    fv = float(val)
+                    if math.isfinite(fv):
+                        best = max(best, fv)
                 except ValueError:
                     pass
         if best > (dps or 0):

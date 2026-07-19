@@ -122,6 +122,11 @@ class CommunityTags:
     def suggest_tag(self, entity, tag, note=""):
         """Propose that `entity` carries game tag `tag`. Re-proposing an
         existing suggestion counts as a vote for it instead of duplicating."""
+        # Reject non-string inputs cleanly (a tag/entity is text) instead of
+        # crashing on .strip() or storing a coerced "['a']" as a real tag.
+        if (entity is not None and not isinstance(entity, str)) or \
+           (tag is not None and not isinstance(tag, str)):
+            return None
         entity = (entity or "").strip()
         tag = (tag or "").strip()
         if not entity or not tag:
@@ -140,6 +145,9 @@ class CommunityTags:
     def suggest_relation(self, entity, relation, target, note=""):
         """Propose a relationship: `entity` APPLIES `target` (e.g. a unique
         that applies Corrupted Blood) or `entity` is AFFECTED_BY `target`."""
+        if (entity is not None and not isinstance(entity, str)) or \
+           (target is not None and not isinstance(target, str)):
+            return None
         entity = (entity or "").strip()
         target = (target or "").strip()
         relation = _norm(relation)
@@ -166,10 +174,18 @@ class CommunityTags:
 
     # -- curation ----------------------------------------------------------------
     def vote(self, entry_id, delta=1):
+        # A non-numeric / fractional delta must be rejected cleanly, not crash
+        # (ValueError/TypeError) or silently truncate (1.9 -> +1).
+        try:
+            d = int(delta)
+            if d != delta:            # reject 1.9, "1.5", etc. — no silent trunc
+                return None
+        except (TypeError, ValueError):
+            return None
         with self._lock:
             for e in self._items:
                 if e.get("id") == entry_id:
-                    e["votes"] = int(e.get("votes", 1)) + int(delta)
+                    e["votes"] = int(e.get("votes", 1)) + d
                     self._save()
                     return e["votes"]
         return None

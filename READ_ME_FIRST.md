@@ -52,6 +52,8 @@ copies, or links you to them. The installer can help you fetch and locate each.
 - **NeverSink / FilterBlade** — loot filter management (embedded web tool).
 - **Craft of Exile** — crafting simulator (embedded web tool).
 - **Rhubarb Lip Sync** — drives the Orb's mouth movements when it speaks.
+- **Piper** — the free offline neural voice behind the "Kalandra Voice"
+  (no account or API key needed; `launchers/Install Kalandra Voice.bat`).
 - **Obsidian** — optional viewer for the scraped knowledge base exported as a vault.
 
 ---
@@ -119,7 +121,9 @@ ruby = clear, sapphire = connect). Contains:
   set a **session token budget** to get a countdown warning as you approach it.
 - **Companion orb.** Choose which currency orb floats as your companion (Divine,
   Chaos, Vaal, etc.). Drop art into `gui_overlay/assets/orbs/2d/<slug>.png`.
-- **Divine Orb voice.** Pick a local system voice (TTS).
+- **Divine Orb voice.** Pick the **Kalandra Voice** (free offline neural
+  voice — the "Get free voice" button downloads it in one click, no account or
+  API key) or any local system voice (TTS).
 - **Account linking.** Each integration/provider has a row to paste its key (stored
   in the OS keychain) or open its sign-in page. Connection status loads in the
   background so the panel opens instantly.
@@ -257,7 +261,9 @@ Ordered roughly by how close each is. ToS notes included where it matters.
 **Next up (close):**
 - **"Hey Kalandra" wake word** — hands-free voice using a lightweight always-on
   detector (low CPU) that only wakes transcription when it hears the phrase.
-- **ElevenLabs voices** — premium cloud TTS as an option alongside the free local voice.
+- **ElevenLabs voices** — premium cloud TTS as an option alongside the free
+  local voices. (The free tier of "good voices" shipped first: the offline
+  Kalandra Voice above needs no account at all.)
 - **DB status window** — double-click the sync medallion: shows the active
   database, last sync, whether poe2db has a newer patch, and a primary-source picker.
 - **PoE Overlay II Standalone** — add to the integrations list in setup/settings.

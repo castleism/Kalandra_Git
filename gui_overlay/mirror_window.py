@@ -760,6 +760,7 @@ if PYQT_AVAILABLE:
 
     class SettingsDialog(KalandraFrameDialog):
         _voices_loaded = pyqtSignal(list)
+        _voice_installed = pyqtSignal(bool, str)
         _conn_loaded = pyqtSignal(dict)
 
         def __init__(self, account_manager, config, parent=None, on_export_vault=None,
@@ -779,6 +780,7 @@ if PYQT_AVAILABLE:
             self.on_dashboard_change = on_dashboard_change
             self._voices = voices               # pre-cached [(id, name)] or None
             self._voices_loaded.connect(self._fill_voice_combo)
+            self._voice_installed.connect(self._on_voice_installed)
             self._conn_loaded.connect(self._apply_connections)
             self._svc_headers = {}              # svc_id -> (QLabel, name, kind)
             self.on_export_vault = on_export_vault
@@ -948,6 +950,21 @@ if PYQT_AVAILABLE:
             # _populate_voices) so opening Settings is instant.
             self.voice_combo.currentIndexChanged.connect(self._on_voice_change)
             voice_row.addWidget(self.voice_combo, 1)
+            # One-click free voice: no ElevenLabs account, no API key, no voice
+            # file needed — downloads the offline Kalandra Voice (Piper) into
+            # tools/piper/ and selects it. Hidden once it's installed.
+            self.voice_get_btn = QPushButton("Get free voice")
+            self.voice_get_btn.setProperty("gem", "sapphire")
+            self.voice_get_btn.setToolTip(
+                "Download the free offline Kalandra Voice (~90 MB, one time).\n"
+                "No account or API key needed — it runs entirely on this PC.")
+            self.voice_get_btn.clicked.connect(self._get_free_voice)
+            try:
+                if VoiceEngine and VoiceEngine.piper_available():
+                    self.voice_get_btn.hide()
+            except Exception:
+                pass
+            voice_row.addWidget(self.voice_get_btn)
             root.addLayout(voice_row)
 
             # --- Companion orb (which currency orb floats as your companion) ---
@@ -1564,10 +1581,20 @@ if PYQT_AVAILABLE:
                     self.ggg_connect_btn.setEnabled(True)
                     if res.get("ok"):
                         tok = res["token"]
-                        if self.am:
-                            self.am.set_secret("pathofexile", json.dumps(tok))
-                        self.ggg_status.setText("🟢 GGG account linked! Token stored "
-                                                "securely in your OS keychain.")
+                        # set_secret is fail-closed: only claim "stored" if the
+                        # keychain actually accepted it.
+                        stored = bool(self.am and
+                                      self.am.set_secret("pathofexile",
+                                                         json.dumps(tok)))
+                        if stored:
+                            self.ggg_status.setText(
+                                "🟢 GGG account linked! Token stored securely "
+                                "in your OS keychain.")
+                        else:
+                            self.ggg_status.setText(
+                                "⚠ Signed in, but the token could NOT be stored "
+                                "— the OS keychain is unavailable (install/enable "
+                                "keyring). You'll need to reconnect next launch.")
                     else:
                         self.ggg_status.setText(f"⚠ OAuth failed: {res.get('error')}")
                 QTimer.singleShot(0, _done)
@@ -1903,6 +1930,51 @@ if PYQT_AVAILABLE:
             self.config["voice_id"] = self.voice_combo.currentData() or ""
             save_config(self.config)
 
+        def _get_free_voice(self):
+            """Download + install the offline Kalandra Voice (Piper). Runs on a
+            worker thread; the config is updated HERE (not in the script) so this
+            dialog's in-memory config never clobbers the new keys on save."""
+            self.voice_get_btn.setEnabled(False)
+            self.voice_get_btn.setText("Downloading… (~90 MB)")
+
+            def _work():
+                ok, msg = False, ""
+                try:
+                    import sys as _s, os as _o
+                    scripts_dir = _o.path.join(_o.getcwd(), "scripts")
+                    if scripts_dir not in _s.path:
+                        _s.path.insert(0, scripts_dir)
+                    import install_voice
+                    ok, msg = install_voice.install(cfg=self.config,
+                                                    write_config=False)
+                except Exception as e:
+                    msg = f"Voice install failed: {e}"
+                self._voice_installed.emit(bool(ok), str(msg))
+
+            threading.Thread(target=_work, daemon=True).start()
+
+        def _on_voice_installed(self, ok, msg):
+            if ok:
+                self.config["voice_id"] = "piper"
+                save_config(self.config)
+                self.voice_get_btn.setText("Voice installed ✓")
+                # Surface the new voice in the picker and select it.
+                self.voice_combo.blockSignals(True)
+                if self.voice_combo.findData("piper") < 0:
+                    self.voice_combo.insertItem(
+                        1, "Kalandra Voice — free offline neural voice", "piper")
+                self.voice_combo.setCurrentIndex(self.voice_combo.findData("piper"))
+                self.voice_combo.blockSignals(False)
+                QTimer.singleShot(2500, self.voice_get_btn.hide)
+            else:
+                self.voice_get_btn.setEnabled(True)
+                self.voice_get_btn.setText("Get free voice")
+                self.voice_get_btn.setToolTip(msg or "Download failed — try again.")
+            try:
+                kinfo(self, "Kalandra Voice", msg or ("Installed!" if ok else "Failed."))
+            except Exception:
+                pass
+
 
 if PYQT_AVAILABLE:
     class CharacterDialog(KalandraFrameDialog):
@@ -2124,9 +2196,13 @@ if PYQT_AVAILABLE:
             self.config["account_name"] = account
             self.config["league"] = self.league_combo.currentText()
             save_config(self.config)
+            sess_note = ""
             if self.am and self.sess_edit.text().strip():
-                self.am.set_secret("poesessid", self.sess_edit.text().strip())
-            self.status.setText("Syncing characters from your GGG account...")
+                if not self.am.set_secret("poesessid", self.sess_edit.text().strip()):
+                    sess_note = ("  (⚠ POESESSID not stored — OS keychain "
+                                 "unavailable; using it for this sync only)")
+            self.status.setText("Syncing characters from your GGG account..."
+                                + sess_note)
             self.refresh_btn.setEnabled(False)
             threading.Thread(target=self._chars_worker,
                              args=(account, self.league_combo.currentText()), daemon=True).start()
@@ -3357,25 +3433,25 @@ class KalandraOverlayApp(ParentClass):
         # An external tool owns price checking? Then it owns Ctrl+C too.
         if self.config.get("price_checker", "kalandra") != "kalandra":
             return
+        # W4-00 provider seam: the item-in-hand source is swappable (clipboard
+        # today, a GGG engine callback someday) — read through the registry,
+        # never Qt's clipboard or the parser directly.
         try:
-            txt = QApplication.clipboard().text() or ""
+            from core_engine.providers import get_provider
+            prov = get_provider("item_in_hand")
+            if prov is None:
+                return
+            info, txt = prov.read()
         except Exception:
             return
         now = time.time()
-        if (not txt or txt == self._last_clip or len(txt) > 4000
+        if (not txt or txt == self._last_clip
                 or (now - self._clip_ts) < 0.8):
             return
-        if "Rarity:" not in txt and "Item Class:" not in txt:
-            return                      # not a PoE item copy
         self._last_clip = txt
         self._clip_ts = now
-        try:
-            from core_engine.trade_tools import parse_item_text
-            info = parse_item_text(txt)
-        except Exception:
-            return
-        if not (info.get("name") or info.get("base")):
-            return
+        if not info:
+            return                      # not a PoE item copy (or unparsable)
         logger.log_event("TRADE", f"Item copied in game: "
                          f"{info.get('name') or info.get('base')}")
         self._show_price_popup(info, txt)
@@ -3857,6 +3933,10 @@ class KalandraOverlayApp(ParentClass):
         try:
             self.voice.brain = self.config.get("ai_brain", "openai")
             self.voice.model = self._active_model()
+            # Voice picks apply mid-session too (incl. the Kalandra Voice the
+            # moment its download finishes) — no restart needed.
+            self.voice.voice_id = self.config.get("voice_id") or None
+            self.voice.voice_rate = self.config.get("voice_rate") or None
         except Exception:
             pass
 
@@ -4882,4 +4962,71 @@ class KalandraOverlayApp(ParentClass):
                 # LAUNCHED get WM_CLOSE (terminate only as fallback); adopted
                 # EXTERNAL instances are released back to the desktop intact.
                 try:
-                    se
+                    self._dashboard.shutdown_embedded()
+                except Exception:
+                    pass
+                self._dashboard.deleteLater()
+        except Exception:
+            pass
+        app = QApplication.instance()
+        if app is not None:
+            app.quit()
+
+
+def _install_crash_guard():
+    """Record unhandled exceptions (main thread AND worker threads) to a crash
+    log instead of letting them vanish or abort the app without a trace."""
+    import sys as _sys
+
+    def _log_crash(where, exc_type, exc, tb):
+        try:
+            os.makedirs("data_engine", exist_ok=True)
+            with open(os.path.join("data_engine", "crash.log"), "a", encoding="utf-8") as f:
+                f.write(f"\n===== {datetime.now().isoformat()} ({where}) =====\n")
+                traceback.print_exception(exc_type, exc, tb, file=f)
+        except Exception:
+            pass
+        try:
+            traceback.print_exception(exc_type, exc, tb)
+        except Exception:
+            pass
+
+    def _hook(exc_type, exc, tb):
+        _log_crash("main", exc_type, exc, tb)
+    _sys.excepthook = _hook
+
+    # Worker-thread exceptions (Python 3.8+).
+    try:
+        def _thook(args):
+            _log_crash(f"thread:{getattr(args, 'thread', None)}",
+                       args.exc_type, args.exc_value, args.exc_traceback)
+        threading.excepthook = _thook
+    except Exception:
+        pass
+
+
+if __name__ == "__main__":
+    if PYQT_AVAILABLE:
+        try:
+            _install_crash_guard()
+            try:
+                QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts, True)
+            except Exception:
+                pass
+            app = QApplication(sys.argv)
+            app.setQuitOnLastWindowClosed(False)  # overlay (a Tool window) owns exit
+            overlay = KalandraOverlayApp()
+            overlay.show()
+            QTimer.singleShot(800, overlay.initial_sync)
+            QTimer.singleShot(1200, overlay.startup_freshness_check)
+            QTimer.singleShot(1600, overlay.startup_game_data_check)
+            exit_code = app.exec()
+            print("\n=========================================================")
+            print(f"    KALANDRA OVERLAY v{KALANDRA_VERSION} TERMINATED SAFELY.")
+            print("    Press Enter to close this diagnostic terminal window...")
+            print("=========================================================")
+            input()
+            sys.exit(exit_code)
+        except Exception:
+            print("\n=========================================================")
+           

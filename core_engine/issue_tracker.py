@@ -71,7 +71,12 @@ class IssueTracker:
 
     def _save(self):
         try:
-            os.makedirs(os.path.dirname(self.path), exist_ok=True)
+            # dirname of a bare filename is "" — makedirs("") raises FileNotFound,
+            # which the blanket except then swallowed, so add() silently persisted
+            # nothing. Only create a parent dir when there actually is one.
+            d = os.path.dirname(self.path)
+            if d:
+                os.makedirs(d, exist_ok=True)
             tmp = self.path + ".tmp"
             with open(tmp, "w", encoding="utf-8") as f:
                 json.dump(self._items, f, indent=2, ensure_ascii=False)
@@ -165,7 +170,12 @@ class IssueTracker:
             lines.append("_No open issues._")
             return "\n".join(lines)
         order = {t: i for i, t in enumerate(TYPES)}
-        items.sort(key=lambda e: (order.get(e.get("type"), 99), e.get("severity")))
+        sev_order = {s: i for i, s in enumerate(SEVERITIES)}
+        # Sort by severity RANK, never the raw value: a hand-edited or
+        # partial issues.json can have a missing/None/unknown severity, and
+        # comparing str vs None raises TypeError mid-sort. Unknown -> last.
+        items.sort(key=lambda e: (order.get(e.get("type"), 99),
+                                  sev_order.get(e.get("severity"), 99)))
         cur = None
         for e in items:
             if e.get("type") != cur:

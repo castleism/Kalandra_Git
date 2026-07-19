@@ -66,7 +66,12 @@ class ReserveTracker:
 
     def _save(self):
         try:
-            os.makedirs(os.path.dirname(self.path), exist_ok=True)
+            # dirname("bare.json") == "" and makedirs("") raises, which the
+            # blanket except swallowed -> add() lied about persisting. Only
+            # make a parent dir when one exists.
+            d = os.path.dirname(self.path)
+            if d:
+                os.makedirs(d, exist_ok=True)
             tmp = self.path + ".tmp"
             with open(tmp, "w", encoding="utf-8") as f:
                 json.dump(self._items, f, indent=2, ensure_ascii=False)

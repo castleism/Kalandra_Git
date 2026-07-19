@@ -364,6 +364,15 @@ class QuestBoard:
         for q in closed:
             if not self._gap_gone(q, db_handler):
                 with self._lock:
+                    # Reopen means the data REGRESSED — the old submissions
+                    # agreed on now-stale data, so they must NOT auto-re-verify
+                    # the quest. Archive them for audit and require FRESH
+                    # confirmation (clear resolution + submissions).
+                    if q.get("submissions"):
+                        q.setdefault("past_submissions", []).extend(
+                            q.get("submissions", []))
+                    q["submissions"] = []
+                    q["resolution"] = ""
                     q["status"] = "reopened"
                     reopened.append(q)
         if reopened:

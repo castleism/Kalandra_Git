@@ -234,6 +234,22 @@ def step_rhubarb(cfg):
             "https://github.com/DanielSWolf/rhubarb-lip-sync/releases")
 
 
+def step_voice(cfg):
+    log("\n=== Kalandra Voice (free offline neural voice — no account needed) ===")
+    try:
+        import install_voice   # sibling script in scripts/
+    except ImportError:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        try:
+            import install_voice
+        except Exception as e:
+            log(f"  install_voice.py not found ({e}) — run scripts/install_voice.py directly.")
+            return
+    ok, msg = install_voice.install(cfg=cfg, log=lambda m: log("  " + str(m).strip()),
+                                    write_config=False)   # main() saves cfg after each step
+    log("  " + msg)
+
+
 def step_pob_source(cfg):
     log("\n=== Path of Building 2 SOURCE (headless build simulator) ===")
     existing = _find(TOOLS, "HeadlessWrapper.lua")
@@ -363,6 +379,8 @@ COMPONENTS = [
      "LuaJIT engine (for the live Path of Building simulator)"),
     ("rhubarb",     "extras", True,  step_rhubarb,
      "Rhubarb Lip Sync (accurate talking-face mouth shapes)"),
+    ("voice",       "extras", True,  step_voice,
+     "Kalandra Voice — free offline neural voice for the Orb (no account needed)"),
     ("pob_source",  "extras", True,  step_pob_source,
      "PoB 2 source (headless build simulator) — a few hundred MB"),
     ("pob2_app",    "apps",   False, step_pob2_app,
@@ -446,7 +464,8 @@ def main():
 
     log("\n-------------------------------------------------------------")
     log("Setup finished. Paths saved to data_engine/config.json:")
-    for k in ("luajit_path", "rhubarb_path", "pob_install_dir", "pob_app_installer",
+    for k in ("luajit_path", "rhubarb_path", "piper_path", "piper_voice",
+              "pob_install_dir", "pob_app_installer",
               "exiled_exchange2", "xiletrade", "lailloken_ui",
               "obsidian_installer", "obsidian_installed"):
         if cfg.get(k):

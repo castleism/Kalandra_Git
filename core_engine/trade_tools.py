@@ -289,12 +289,15 @@ def offline_craft_guidance(goal, econ_rows=None):
 
     Pure logic (no AI, no network). If `econ_rows` (poe.ninja currency rows)
     are provided, each route gets a rough cost line in Exalted Orbs."""
-    g = (goal or "").lower()
+    # Tolerate ANY input: None/empty AND non-strings (int/list/dict) — only a
+    # real string has a goal; everything else becomes "unspecified".
+    goal = goal.strip() if isinstance(goal, str) else ""
+    g = goal.lower()
     wants = [key for key, (words, _d) in _GOAL_MODS.items()
              if any(w in g for w in words)]
     base = next((b for b in _BASE_WORDS if b in g), None)
 
-    lines = [f"CRAFTING PLAN — {goal.strip() or 'unspecified goal'}", ""]
+    lines = [f"CRAFTING PLAN — {goal or 'unspecified goal'}", ""]
     lines.append(f"Target base: {base.title() if base else 'not stated — name the base type for tier advice'}")
     if wants:
         lines.append("Mods that deliver this goal:")
@@ -443,7 +446,15 @@ def estimate_value(info, econ_rows):
     if not name:
         return None
     cls = (info.get("item_class") or "").lower()
-    if "currency" not in cls and "fragment" not in cls and cls != "":
+    rarity = (info.get("rarity") or "").lower()
+    if "currency" in cls or "fragment" in cls:
+        pass                       # explicitly stackable — quotable
+    elif cls == "" and rarity == "currency" and not info.get("base"):
+        pass                       # headerless paste but Rarity: Currency
+    else:
+        # Gear NEVER gets an invented estimate — including gear whose NAME
+        # merely sounds like a currency (e.g. a unique called "Divine Orb"
+        # pasted without an Item Class line).
         return None
     for r in econ_rows:
         rname = str(r.get("name", ""))

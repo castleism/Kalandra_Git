@@ -204,8 +204,13 @@ class FilterDocument:
 
     @classmethod
     def load(cls, path):
-        with open(path, "r", encoding="utf-8", errors="replace") as f:
-            return cls.from_text(f.read(), path)
+        # Binary + surrogateescape = byte-exact fidelity for ANY encoding and
+        # ANY line-ending style: CRLF files keep their '\r' inside each line
+        # (we only ever split/join on '\n'), and non-UTF8 bytes survive decode
+        # -> encode unchanged instead of being mangled to U+FFFD.
+        with open(path, "rb") as f:
+            raw = f.read()
+        return cls.from_text(raw.decode("utf-8", "surrogateescape"), path)
 
     # -- editing ---------------------------------------------------------------
     def set_action(self, index, action):
@@ -236,8 +241,11 @@ class FilterDocument:
         if not target:
             raise ValueError("no path to save to")
         tmp = target + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            f.write(self.text())
+        # Binary write mirrors the binary read: no newline translation (which
+        # silently rewrote every user's line endings) and surrogateescape
+        # restores any non-UTF8 bytes exactly as they were loaded.
+        with open(tmp, "wb") as f:
+            f.write(self.text().encode("utf-8", "surrogateescape"))
         os.replace(tmp, target)
         self.path = target
         return target

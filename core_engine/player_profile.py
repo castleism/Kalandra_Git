@@ -204,7 +204,9 @@ class PlayerProfile:
 
     def save(self, path=PROFILE_PATH):
         try:
-            os.makedirs(os.path.dirname(path), exist_ok=True)
+            d = os.path.dirname(path)        # "" for a bare filename — skip makedirs
+            if d:
+                os.makedirs(d, exist_ok=True)
             self.data["updated"] = time.strftime("%Y-%m-%d %H:%M:%S")
             with open(path, "w", encoding="utf-8") as f:
                 json.dump(self.data, f, indent=2, ensure_ascii=False)

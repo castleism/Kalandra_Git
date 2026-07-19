@@ -243,4 +243,11 @@ fallback branches). All advisory.
    for the estimate?
 5. Secondary-focus input: infer from the loaded build's existing scaling, or ask
    the player each time?
-6. Community tags: local-only vs shared; if shared, moderation/voting model a
+6. Community tags: local-only vs shared; if shared, moderation/voting model and
+   how "unverified" is surfaced so it never masquerades as authoritative.
+7. Meta-mining data access: can poe.ninja be filtered by item server-side, or
+   must we sample player builds and aggregate client-side within rate limits?
+   Co-occurrence normalization (lift/PMI) to stop ubiquitous items dominating.
+8. Applier identification: model an explicit `applies: <effect>` relationship in
+   the graph (scraped + community) so appliers are directly queryable for both
+   the tag search and the meta-miner.
